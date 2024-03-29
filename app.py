@@ -224,14 +224,14 @@ assistant_id = functions.create_assistant(client)  # 이 기능은 funcionts.py�
 
 
 # 대화 만들기
-@app.route('gpt/start', methods=['GET'])
+@app.route('/gpt/start', methods=['GET'])
 def start_conversation():
       thread = client.beta.threads.create()
       return jsonify({"thread_id": thread.id})
 
     
 # 채팅 시작하기
-@app.route('gpt/chat', methods=['POST'])
+@app.route('/gpt/chat', methods=['POST'])
 def chat(): # 먼저 post에서 받아오는 데이터 정의
     data = request.json
     thread_id = data.get('thread_id')
@@ -279,7 +279,7 @@ def chat(): # 먼저 post에서 받아오는 데이터 정의
     return jsonify({"response": response})
 
 # 대화 종료 후 쓰레드 삭제하기
-@app.route('gpt/end', methods=['DELETE'])
+@app.route('/gpt/end', methods=['DELETE'])
 def delete_thread():
     # 쿼리 파라미터에서 thread_id 추출
     thread_id = request.args.get('thread_id')
