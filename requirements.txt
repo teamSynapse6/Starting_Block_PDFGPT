@@ -1,0 +1,5 @@
+Flask==3.0.2
+olefile==0.47
+openai==1.10.0
+requests==2.31.0
+Werkzeug==3.0.1
