@@ -21,7 +21,7 @@ assistant_file_path = os.path.join(BASE_DIR, 'assistant.json')
 
 # PDF서버로부터 id의 데이터를 호출하는 메소드
 def information_from_pdf_server(announcement_id):
-    pdf_url = f"https://pdf.startingblock.co.kr/announcement?id={announcement_id}"
+    pdf_url = f"https://pdfgpt.startingblock.co.kr/announcement?id={announcement_id}"
     response = requests.get(pdf_url)
     
     if response.status_code == 200:
