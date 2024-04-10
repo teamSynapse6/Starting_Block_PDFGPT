@@ -249,7 +249,6 @@ def chat():
                 yield f"data: {json.dumps({'message': complete_message})}\n\n"
                 
                 complete_message = ''
-
     return Response(generate(), content_type='text/event-stream')
 
 
