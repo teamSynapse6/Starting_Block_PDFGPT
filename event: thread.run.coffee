@@ -41,3 +41,18 @@ data: { "id": "run_123", "object": "thread.run", "created_at": 1710330640, "assi
 
 event: done
 data: [DONE]
+
+
+event='thread.message.in_progress')
+ThreadMessageDelta(data=MessageDeltaEvent(id='msg_hoocr5sH9BzODJgZOCv8sXf4', delta=MessageDelta(content=[TextDeltaBlock(index=0, type='text', text=TextDelta(annotations=[], value='안'))], file_ids=None, role=None), object='thread.message.delta'), event='thread.message.delta')
+ThreadMessageDelta(data=MessageDeltaEvent(id='msg_hoocr5sH9BzODJgZOCv8sXf4', delta=MessageDelta(content=[TextDeltaBlock(index=0, type='text', text=TextDelta(annotations=None, value='녕'))], file_ids=None, role=None), object='thread.message.delta'), event='thread.message.delta')
+ThreadMessageDelta(data=MessageDeltaEvent(id='msg_hoocr5sH9BzODJgZOCv8sXf4', delta=MessageDelta(content=[TextDeltaBlock(index=0, type='text', text=TextDelta(annotations=None, value='하세요'))], file_ids=None, role=None), object='thread.message.delta'), event='thread.message.delta')
+ThreadMessageDelta(data=MessageDeltaEvent(id='msg_hoocr5sH9BzODJgZOCv8sXf4', delta=MessageDelta(content=[TextDeltaBlock(index=0, type='text', text=TextDelta(annotations=None, value='!'))], file_ids=None, role=None), object='thread.message.delta'), event='thread.message.delta')
+
+
+
+event_data = ThreadMessageDelta(data=MessageDeltaEvent(id='msg_hoocr5sH9BzODJgZOCv8sXf4', delta=MessageDelta(content=[TextDeltaBlock(index=0, type='text', text=TextDelta(annotations=[], value='안'))], file_ids=None, role=None), object='thread.message.delta'))
+
+message_value = event_data.data.delta.content[0].text.value
+
+print(message_value)
