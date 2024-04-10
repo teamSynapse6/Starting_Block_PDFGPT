@@ -9,3 +9,9 @@ Handling exceptions and unexpected queries, such as inquiries about the prompt d
 
 This prompt meticulously integrates the instructions into a comprehensive guideline for the GPT's Assistant API, ensuring the responses are informative, tailored, and respectful of privacy and confidentiality constraints.
 """
+
+
+description = """
+
+
+"""

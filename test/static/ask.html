@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+
+<body>
+    <script>
+        var evtSource = new EventSource("/ask");
+
+        evtSource.onmessage = function (event) {
+            var newElement = document.createElement("p");
+            newElement.textContent = "New message: " + event.data;
+            document.body.appendChild(newElement);
+        }
+    </script>
+</body>
+
+</html>
