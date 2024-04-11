@@ -9,9 +9,10 @@ import zlib
 import struct
 import json
 import openai
-from openai import OpenAI
+from openai import OpenAI, AssistantEventHandler
 import functions
 import time
+
 
 app = Flask(__name__)
 
@@ -63,7 +64,7 @@ def delete_files():
             try:
                 os.remove(filepath)
             except Exception as e:
-                pass
+                print(f"Error deleting file {file_id}: {e}")
     return jsonify({"status": "finished"}), 200
 
 
@@ -92,6 +93,8 @@ def upload_files():
                 with open(temp_path, 'wb') as f:
                     shutil.copyfileobj(response.raw, f)
 
+                print(f"Downloaded file saved as: {temp_path}")
+
                 # 파일 형식에 따른 처리
                 if file_format == 'pdf':
                     # PDF 파일을 TXT로 변환
@@ -106,11 +109,12 @@ def upload_files():
                 success_items.append(file_id)
 
             except Exception as e:
+                print(f"Error processing file {file_id}: {e}")
                 failed_items.append(file_id)
                 if os.path.exists(temp_path):
                     os.remove(temp_path)  # 실패 시 임시 파일 삭제
-                    print(f"{time.strftime('%Y년 %m월 %d일 %H시 %M분')},{file_id} 파일 저장 실패.")
         else:
+            print(f"Unsupported file format for file {file_id}")
             failed_items.append(file_id)
 
     return jsonify({"status": "finished", "success_items": success_items, "failed_items": failed_items}), 200
@@ -130,6 +134,7 @@ def convert_pdf_to_txt(temp_path, file_id):
         doc.close()  # PDF 파일 사용 후 닫기
         os.remove(temp_path)  # 처리 완료 후 원본 PDF 파일 삭제
     except Exception as e:
+        print(f"PDF to TXT conversion failed for {file_id}: {e}")
         raise e
     
 def get_hwp_text(filename):
@@ -190,12 +195,15 @@ def convert_hwp_to_txt(hwp_path, output_folder):
         with open(output_file_path, 'w', encoding='utf-8') as output_file:
             output_file.write(extracted_text)
 
+        print(f"파일이 저장되었습니다: {output_file_path}")
     except Exception as e:
+        print(f"파일 처리 중 오류가 발생했습니다: {e}")
         raise
     finally:
         # 변환 작업이 완료된 후 원본 HWP 파일 삭제
         if os.path.exists(hwp_path):
             os.remove(hwp_path)
+            print(f"원본 파일이 삭제되었습니다: {hwp_path}")
 
 
 #GPT 서버 코드 부분
@@ -218,42 +226,62 @@ def start_conversation():
 
     
 # 채팅 시작하기
+
+
 @app.route('/gpt/chat', methods=['POST'])
 def chat():
     data = request.json
     thread_id = data.get('thread_id')
+    announcement_id = data.get('announcement_id')
     message = data.get('message')
 
     if not thread_id:
         return jsonify({"error": "thread_id가 없습니다"}), 400
-    
-    stream = client.beta.threads.create_and_run(
-        assistant_id=assistant_id,
-        thread={
-            "messages":[
-                {"role": "user", 'content': message}
-            ]
-        },
-        stream=True
-    )
+
+    # 유저의 메시지를 쓰레드에 추가
+    client.beta.threads.messages.create(thread_id=thread_id, role="user", content=message)
+
+    # 어시스턴트 실행과 동시에 스트리밍 시작
     def generate():
+        stream = client.beta.threads.runs.create(thread_id=thread_id, assistant_id=assistant_id, stream=True)
         complete_message = ''
+        
         for event in stream:
+            print(event)
             if event.event == 'thread.message.delta':
+                # 실시간 메시지 업데이트 처리
                 message_delta = event.data.delta
                 for part in message_delta.content:
                     if part.type == 'text':
                         complete_message += part.text.value
-                    # 실시간으로 보내고 있는 메시지 로깅
-                print(f"Sending message: {complete_message}")
                 yield f"data: {json.dumps({'message': complete_message})}\n\n"
-                
                 complete_message = ''
+            elif event.event == 'thread.run.requires_action':
+                tool_call_id = event.data.required_action.submit_tool_outputs.tool_calls[0].id
+                print(f"Tool call ID: {tool_call_id}")
+                print(f"Run ID: {event.data.id}")
+                # PDF 서버에서 정보 찾기
+                output = functions.information_from_pdf_server(announcement_id)
+                print('기능이 호출됨')
+                tool_stream = client.beta.threads.runs.submit_tool_outputs(thread_id=thread_id,
+                                                                run_id=event.data.id,
+                                                                stream=True,
+                                                                tool_outputs=[{
+                                                                    "tool_call_id": tool_call_id,
+                                                                    "output": json.dumps(output)
+                                                                }])
+                for event in tool_stream:
+                    if event.event == 'thread.message.delta':
+                        # 실시간 메시지 업데이트 처리
+                        message_delta = event.data.delta
+                        for part in message_delta.content:
+                            if part.type == 'text':
+                                complete_message += part.text.value
+                        yield f"data: {json.dumps({'message': complete_message})}\n\n"
+                        complete_message = ''
+            time.sleep(1)  # 완료 후 1초간 대기
+
     return Response(generate(), content_type='text/event-stream')
-
-
-
-
 
 # 대화 종료 후 쓰레드 삭제하기
 @app.route('/gpt/end', methods=['DELETE'])
