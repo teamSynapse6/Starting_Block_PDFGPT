@@ -2,3 +2,4 @@ myvenv/
 myvenv/bin/activate
 .gitignore
 processed_file/
+__pycache__/
