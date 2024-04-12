@@ -93,8 +93,6 @@ def upload_files():
                 with open(temp_path, 'wb') as f:
                     shutil.copyfileobj(response.raw, f)
 
-                print(f"Downloaded file saved as: {temp_path}")
-
                 # 파일 형식에 따른 처리
                 if file_format == 'pdf':
                     # PDF 파일을 TXT로 변환
@@ -114,7 +112,6 @@ def upload_files():
                 if os.path.exists(temp_path):
                     os.remove(temp_path)  # 실패 시 임시 파일 삭제
         else:
-            print(f"Unsupported file format for file {file_id}")
             failed_items.append(file_id)
 
     return jsonify({"status": "finished", "success_items": success_items, "failed_items": failed_items}), 200
@@ -134,7 +131,6 @@ def convert_pdf_to_txt(temp_path, file_id):
         doc.close()  # PDF 파일 사용 후 닫기
         os.remove(temp_path)  # 처리 완료 후 원본 PDF 파일 삭제
     except Exception as e:
-        print(f"PDF to TXT conversion failed for {file_id}: {e}")
         raise e
     
 def get_hwp_text(filename):
@@ -195,15 +191,12 @@ def convert_hwp_to_txt(hwp_path, output_folder):
         with open(output_file_path, 'w', encoding='utf-8') as output_file:
             output_file.write(extracted_text)
 
-        print(f"파일이 저장되었습니다: {output_file_path}")
     except Exception as e:
-        print(f"파일 처리 중 오류가 발생했습니다: {e}")
         raise
     finally:
         # 변환 작업이 완료된 후 원본 HWP 파일 삭제
         if os.path.exists(hwp_path):
             os.remove(hwp_path)
-            print(f"원본 파일이 삭제되었습니다: {hwp_path}")
 
 
 #GPT 서버 코드 부분
@@ -247,7 +240,6 @@ def chat():
         complete_message = ''
         
         for event in stream:
-            print(event)
             if event.event == 'thread.message.delta':
                 # 실시간 메시지 업데이트 처리
                 message_delta = event.data.delta
@@ -258,11 +250,8 @@ def chat():
                 complete_message = ''
             elif event.event == 'thread.run.requires_action':
                 tool_call_id = event.data.required_action.submit_tool_outputs.tool_calls[0].id
-                print(f"Tool call ID: {tool_call_id}")
-                print(f"Run ID: {event.data.id}")
                 # PDF 서버에서 정보 찾기
                 output = functions.information_from_pdf_server(announcement_id)
-                print('기능이 호출됨')
                 tool_stream = client.beta.threads.runs.submit_tool_outputs(thread_id=thread_id,
                                                                 run_id=event.data.id,
                                                                 stream=True,
@@ -271,7 +260,6 @@ def chat():
                                                                     "output": json.dumps(output)
                                                                 }])
                 for event in tool_stream:
-                    print(event)
                     if event.event == 'thread.message.delta':
                         # 실시간 메시지 업데이트 처리
                         message_delta = event.data.delta
