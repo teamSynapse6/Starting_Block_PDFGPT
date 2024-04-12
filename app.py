@@ -242,7 +242,7 @@ def chat():
                 for part in message_delta.content:
                     if part.type == 'text':
                         complete_message += part.text.value
-                yield complete_message + '\n'  # Ensure newline is here
+                yield complete_message 
                 complete_message = ''
             elif event.event == 'thread.run.requires_action':
                 tool_call_id = event.data.required_action.submit_tool_outputs.tool_calls[0].id
@@ -261,11 +261,11 @@ def chat():
                         for part in message_delta.content:
                             if part.type == 'text':
                                 complete_message += part.text.value
-                        yield complete_message + '\n'
+                        yield complete_message
                         complete_message = ''
             time.sleep(1)  # Delay for better streaming
 
-    response = Response(stream_with_context(generate()))
+    response = Response(generate(), content_type='text/event-stream')
     response.headers['X-Accel-Buffering'] = 'no'
     return response
 
