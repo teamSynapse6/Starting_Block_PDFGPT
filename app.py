@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, abort, Response, stream_with_context
+from flask import Flask, request, jsonify, abort, Response
 import requests
 import fitz 
 import os
@@ -236,7 +236,6 @@ def chat():
         complete_message = ''
         
         for event in stream:
-            print(event)
             if event.event == 'thread.message.delta':
                 message_delta = event.data.delta
                 for part in message_delta.content:
@@ -255,7 +254,6 @@ def chat():
                                                                                 "output": json.dumps(output)
                                                                             }])
                 for event in tool_stream:
-                    print(event)
                     if event.event == 'thread.message.delta':
                         message_delta = event.data.delta
                         for part in message_delta.content:
