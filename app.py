@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, abort, Response
+from flask import Flask, request, jsonify, abort, Response, stream_with_context
 import requests
 import fitz 
 import os
@@ -229,48 +229,45 @@ def chat():
     if not thread_id:
         return jsonify({"error": "thread_id가 없습니다"}), 400
 
-    # 유저의 메시지를 쓰레드에 추가
     client.beta.threads.messages.create(thread_id=thread_id, role="user", content=message)
-   
 
-
-    # 어시스턴트 실행과 동시에 스트리밍 시작
     def generate():
         stream = client.beta.threads.runs.create(thread_id=thread_id, assistant_id=assistant_id, stream=True)
         complete_message = ''
         
         for event in stream:
+            print(event)
             if event.event == 'thread.message.delta':
-                # 실시간 메시지 업데이트 처리
                 message_delta = event.data.delta
                 for part in message_delta.content:
                     if part.type == 'text':
                         complete_message += part.text.value
-                        yield complete_message
+                yield complete_message + '\n'  # Ensure newline is here
                 complete_message = ''
             elif event.event == 'thread.run.requires_action':
                 tool_call_id = event.data.required_action.submit_tool_outputs.tool_calls[0].id
-                # PDF 서버에서 정보 찾기
                 output = functions.information_from_pdf_server(announcement_id)
                 tool_stream = client.beta.threads.runs.submit_tool_outputs(thread_id=thread_id,
-                                                                run_id=event.data.id,
-                                                                stream=True,
-                                                                tool_outputs=[{
-                                                                    "tool_call_id": tool_call_id,
-                                                                    "output": json.dumps(output)
-                                                                }])
+                                                                            run_id=event.data.id,
+                                                                            stream=True,
+                                                                            tool_outputs=[{
+                                                                                "tool_call_id": tool_call_id,
+                                                                                "output": json.dumps(output)
+                                                                            }])
                 for event in tool_stream:
+                    print(event)
                     if event.event == 'thread.message.delta':
-                        # 실시간 메시지 업데이트 처리
                         message_delta = event.data.delta
                         for part in message_delta.content:
                             if part.type == 'text':
                                 complete_message += part.text.value
-                        yield complete_message
+                        yield complete_message + '\n'
                         complete_message = ''
-            time.sleep(1)  # 완료 후 1초간 대기
+            time.sleep(1)  # Delay for better streaming
 
-    return Response(generate(), content_type='text/event-stream')
+    response = Response(stream_with_context(generate()))
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
 
 # 대화 종료 후 쓰레드 삭제하기
 @app.route('/gpt/end', methods=['DELETE'])
