@@ -9,7 +9,7 @@ import zlib
 import struct
 import json
 import openai
-from openai import OpenAI, AssistantEventHandler
+from openai import OpenAI
 import functions
 import time
 
@@ -226,8 +226,6 @@ def start_conversation():
 
     
 # 채팅 시작하기
-
-
 @app.route('/gpt/chat', methods=['POST'])
 def chat():
     data = request.json
@@ -240,6 +238,8 @@ def chat():
 
     # 유저의 메시지를 쓰레드에 추가
     client.beta.threads.messages.create(thread_id=thread_id, role="user", content=message)
+   
+
 
     # 어시스턴트 실행과 동시에 스트리밍 시작
     def generate():
@@ -254,7 +254,7 @@ def chat():
                 for part in message_delta.content:
                     if part.type == 'text':
                         complete_message += part.text.value
-                yield f"data: {json.dumps({'message': complete_message})}\n\n"
+                        yield complete_message
                 complete_message = ''
             elif event.event == 'thread.run.requires_action':
                 tool_call_id = event.data.required_action.submit_tool_outputs.tool_calls[0].id
@@ -271,13 +271,14 @@ def chat():
                                                                     "output": json.dumps(output)
                                                                 }])
                 for event in tool_stream:
+                    print(event)
                     if event.event == 'thread.message.delta':
                         # 실시간 메시지 업데이트 처리
                         message_delta = event.data.delta
                         for part in message_delta.content:
                             if part.type == 'text':
                                 complete_message += part.text.value
-                        yield f"data: {json.dumps({'message': complete_message})}\n\n"
+                        yield complete_message
                         complete_message = ''
             time.sleep(1)  # 완료 후 1초간 대기
 
