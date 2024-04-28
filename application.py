@@ -14,7 +14,7 @@ import functions
 import time
 
 
-app = Flask(__name__)
+application = Flask(__name__)
 
 # 애플리케이션의 루트 디렉토리 기반으로 절대 경로 생성
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,7 +23,7 @@ PROCESSED_FILE_DIR = os.path.join(BASE_DIR, 'processed_file')
 
 
 # 저장된 파일 리스트 get 메소드
-@app.route('/validation', methods=['GET'])
+@application.route('/validation', methods=['GET'])
 def validate_files():
     filenames = os.listdir(PROCESSED_FILE_DIR)
     file_ids_numeric = [int(filename[:-4]) for filename in filenames if filename.endswith('.txt')]
@@ -32,7 +32,7 @@ def validate_files():
     return jsonify({"file_ids": file_ids_sorted}), 200
 
 # 저장된 특정 공고 정보 가져오기
-@app.route('/announcement')
+@application.route('/announcement')
 def get_announcement():
     file_id = request.args.get('id')
     if not file_id:
@@ -50,7 +50,7 @@ def get_announcement():
         abort(404)  # 파일이 없으면 404 오류 반환
 
 # 아이템 삭제 메소드
-@app.route('/announcement/delete', methods=['DELETE'])
+@application.route('/announcement/delete', methods=['DELETE'])
 def delete_files():
     data = request.get_json()
     file_ids = data.get('id')
@@ -73,7 +73,7 @@ if not os.path.exists(PROCESSED_FILE_DIR):
     os.makedirs(PROCESSED_FILE_DIR)
 
 # pdf, hwp id 반환후 다운 처리 프로세스
-@app.route('/announcement/upload', methods=['POST'])
+@application.route('/announcement/upload', methods=['POST'])
 def upload_files():
     data = request.json
     success_items = []
@@ -106,16 +106,16 @@ def upload_files():
                     # TXT 파일은 바로 저장
                     shutil.move(temp_path, os.path.join(PROCESSED_FILE_DIR, f"{file_id}.txt"))
 
-                success_items.append(file_id)
+                success_items.applicationend(file_id)
 
             except Exception as e:
                 print(f"Error processing file {file_id}: {e}")
-                failed_items.append(file_id)
+                failed_items.applicationend(file_id)
                 if os.path.exists(temp_path):
                     os.remove(temp_path)  # 실패 시 임시 파일 삭제
         else:
             print(f"Unsupported file format for file {file_id}")
-            failed_items.append(file_id)
+            failed_items.applicationend(file_id)
 
     return jsonify({"status": "finished", "success_items": success_items, "failed_items": failed_items}), 200
 
@@ -150,7 +150,7 @@ def get_hwp_text(filename):
         nums = []
         for d in dirs:
             if d[0] == "BodyText":
-                nums.append(int(d[1][len("Section"):]))
+                nums.applicationend(int(d[1][len("Section"):]))
         sections = ["BodyText/Section"+str(x) for x in sorted(nums)]
 
         # 전체 text 추출
@@ -219,14 +219,14 @@ assistant_id = functions.create_assistant(client)  # 이 기능은 funcionts.py�
 
 
 # 대화 만들기
-@app.route('/gpt/start', methods=['GET'])
+@application.route('/gpt/start', methods=['GET'])
 def start_conversation():
       thread = client.beta.threads.create()
       return jsonify({"thread_id": thread.id})
 
     
 # 채팅 시작하기
-@app.route('/gpt/chat', methods=['POST'])
+@application.route('/gpt/chat', methods=['POST'])
 def chat(): # 먼저 post에서 받아오는 데이터 정의
     data = request.json
     thread_id = data.get('thread_id')
@@ -273,7 +273,7 @@ def chat(): # 먼저 post에서 받아오는 데이터 정의
     return jsonify({"response": response})
 
 # 대화 종료 후 쓰레드 삭제하기
-@app.route('/gpt/end', methods=['DELETE'])
+@application.route('/gpt/end', methods=['DELETE'])
 def delete_thread():
     # 쿼리 파라미터에서 thread_id 추출
     thread_id = request.args.get('thread_id')
@@ -292,4 +292,4 @@ def delete_thread():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    application.run(debug=True)
