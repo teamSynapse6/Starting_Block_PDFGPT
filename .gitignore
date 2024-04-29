@@ -1,6 +1,5 @@
 myvenv/
 myvenv/bin/activate
 .gitignore
-processed_file/
 __pycache__/
 assistant.json
