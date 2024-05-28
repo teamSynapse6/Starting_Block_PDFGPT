@@ -46,7 +46,7 @@ def create_assistant(client):
         assistant = client.beta.assistants.create(
             instructions=assistant_instructions,
             name = "Starting_Block_GPT_PDF_Assistant",
-            model="gpt-3.5-turbo-1106",
+            model="gpt-4-1106-preview",
              tools=[
                 {
                     "type": "function",
