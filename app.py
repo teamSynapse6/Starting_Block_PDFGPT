@@ -236,7 +236,7 @@ async def chat(request: Request):
     # 유저의 메시지를 쓰레드에 추가
     client.beta.threads.messages.create(thread_id=thread_id,
                                         role="user",
-                                        content= message)
+                                        content=message)
     
     # 어시스턴트 실행
     run = client.beta.threads.runs.create(thread_id=thread_id,
@@ -248,6 +248,7 @@ async def chat(request: Request):
                                                        run_id=run.id)
         # Run status의 출력에 따라 처리
         if run_status.status == "completed":
+            print('내부처리 완료')
             break
         elif run_status.status == "requires_action":
             for tool_call in run_status.required_action.submit_tool_outputs.tool_calls:
@@ -261,12 +262,12 @@ async def chat(request: Request):
                                                                      "tool_call_id": tool_call.id,
                                                                      "output": json.dumps(output)
                                                                  }])
-                    print("기능 호출 완료됨")
             await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
+    
     messages = client.beta.threads.messages.list(thread_id=thread_id)
     response = messages.data[0].content[0].text.value
+    return JSONResponse(content={"response": response}, media_type="application/json; charset=utf-8")  # UTF-8로 응답을 반환
 
-    return {"response": response}
 
 # 대화 종료 후 쓰레드 삭제하기
 @app.delete("/gpt/end")
