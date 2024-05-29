@@ -262,6 +262,7 @@ async def chat(request: Request):
                                                                      "tool_call_id": tool_call.id,
                                                                      "output": json.dumps(output)
                                                                  }])
+            print('정보호출 완료')
             await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
     
     messages = client.beta.threads.messages.list(thread_id=thread_id)
