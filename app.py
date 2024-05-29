@@ -241,6 +241,7 @@ async def chat(request: Request):
     # 어시스턴트 실행
     run = client.beta.threads.runs.create(thread_id=thread_id,
                                             assistant_id=assistant_id)
+    print('어시스턴트 실행111')
     
     # 만약 functions.py에서 처리해야하는 내용일 경우 실행
     while True:
@@ -250,6 +251,8 @@ async def chat(request: Request):
         if run_status.status == "completed":
             print('내부처리 완료')
             break
+        elif run_status.status == "in_progress":
+            print('내부처리 중')
         elif run_status.status == "requires_action":
             for tool_call in run_status.required_action.submit_tool_outputs.tool_calls:
                 if tool_call.function.name == "information_from_pdf_server":
@@ -262,8 +265,10 @@ async def chat(request: Request):
                                                                      "tool_call_id": tool_call.id,
                                                                      "output": json.dumps(output)
                                                                  }])
-            print('정보호출 완료')
             await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
+            print('정보호출 완료')
+        elif run_status.status == "failed" or "expired":
+            raise HTTPException(status_code=500, detail="어시스턴트 처리 중 오류가 발생했습니다.")
     
     messages = client.beta.threads.messages.list(thread_id=thread_id)
     response = messages.data[0].content[0].text.value
