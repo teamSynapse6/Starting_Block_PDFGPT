@@ -3,19 +3,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List
 from werkzeug.utils import secure_filename
-import requests
-import fitz
-import os
-import shutil
-import olefile
-import zlib
-import struct
-import json
+import requests, fitz, os, shutil, olefile, zlib, struct, json, re, asyncio
 import openai
 from openai import OpenAI
 import functions
-import re
-import asyncio
 
 app = FastAPI()
 
@@ -204,10 +195,10 @@ async def convert_hwp_to_txt(hwp_path, output_folder):
             os.remove(hwp_path)
 
 #GPT 서버 코드 부분
-            
+
 # 환경 변수에서 OpenAI API 키 로드
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')            
-            
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
 # OpenAI 클라이언트 초기화
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -227,22 +218,15 @@ async def chat(request: Request):
     thread_id = data.get('thread_id')
     message = data.get('message')
 
-    # 쓰레드 ID가 없을 경우
     if not thread_id:
         raise HTTPException(status_code=400, detail="thread_id가 없습니다")
 
-    # 유저의 메시지를 쓰레드에 추가
     await asyncio.to_thread(client.beta.threads.messages.create, thread_id=thread_id, role="user", content=message)    
-
-    # 어시스턴트 실행
     run = await asyncio.to_thread(client.beta.threads.runs.create, thread_id=thread_id, assistant_id=assistant_id)
     print('어시스턴트 실행')
     
-    # 만약 functions.py에서 처리해야하는 내용일 경우 실행
     while True:
-        run_status = client.beta.threads.runs.retrieve(thread_id=thread_id,
-                                                       run_id=run.id)
-        # Run status의 출력에 따라 처리
+        run_status = await asyncio.to_thread(client.beta.threads.runs.retrieve, thread_id=thread_id, run_id=run.id)
         if run_status.status == "completed":
             print('내부처리 완료')
             break
@@ -252,33 +236,29 @@ async def chat(request: Request):
         elif run_status.status == "requires_action":
             for tool_call in run_status.required_action.submit_tool_outputs.tool_calls:
                 if tool_call.function.name == "information_from_pdf_server":
-                    # PDF 서버에서 정보 찾기
                     arguments = json.loads(tool_call.function.arguments)
                     output = functions.information_from_pdf_server(arguments["announcement_id"])
-                    client.beta.threads.runs.submit_tool_outputs(thread_id=thread_id,
-                                                                 run_id=run.id,
-                                                                 tool_outputs=[{
-                                                                     "tool_call_id": tool_call.id,
-                                                                     "output": json.dumps(output)
-                                                                 }])
+                    await asyncio.to_thread(client.beta.threads.runs.submit_tool_outputs,
+                                            thread_id=thread_id,
+                                            run_id=run.id,
+                                            tool_outputs=[{
+                                                "tool_call_id": tool_call.id,
+                                                "output": json.dumps(output)
+                                            }])
             await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
             print('정보호출 완료')
-        elif run_status.status == "failed" or "expired":
+        elif run_status.status in ["failed", "expired"]:
             raise HTTPException(status_code=500, detail="어시스턴트 처리 중 오류가 발생했습니다.")
     
-    messages = client.beta.threads.messages.list(thread_id=thread_id)
+    messages = await asyncio.to_thread(client.beta.threads.messages.list, thread_id=thread_id)
     response = messages.data[0].content[0].text.value
-    return JSONResponse(content={"response": response}, media_type="application/json; charset=utf-8")  # UTF-8로 응답을 반환
+    return JSONResponse(content={"response": response}, media_type="application/json; charset=utf-8")
 
-
-# 대화 종료 후 쓰레드 삭제하기
 @app.delete("/gpt/end")
 async def delete_thread(thread_id: str):
-    # thread_id의 유효성 검사
     if not thread_id:
         raise HTTPException(status_code=400, detail="thread_id 파라미터가 필요합니다.")
     
-    # OpenAI API를 사용하여 스레드 삭제
     try:
         response = await asyncio.to_thread(client.beta.threads.delete, thread_id)
         return {"id": thread_id, "object": "thread.deleted", "deleted": True}
