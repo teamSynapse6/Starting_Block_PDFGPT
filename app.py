@@ -284,6 +284,7 @@ async def delete_thread(thread_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail="스레드를 삭제하는 동안 오류가 발생했습니다.")
 
-if __name__ == '__main__':  
+if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=5001)
+    uvicorn.run(app, host="0.0.0.0", port=5001, timeout_keep_alive=60)
+
