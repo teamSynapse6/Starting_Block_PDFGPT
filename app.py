@@ -26,11 +26,11 @@ PROCESSED_FILE_DIR = os.path.join(BASE_DIR, 'processed_file')
 
 # 모델 정의
 class DeleteRequest(BaseModel):
-    id: List[str]
+    id: List[int]
 
 class UploadRequest(BaseModel):
     url: str
-    id: str
+    id: int
     format: str
 
 # 저장된 파일 리스트 get 메소드
@@ -43,8 +43,6 @@ async def validate_files():
     return {"file_ids": file_ids_sorted}
 
 # 저장된 특정 공고 정보 가져오기
-
-
 @app.get("/announcement")
 async def get_announcement(id: str):
     if not id:
@@ -219,7 +217,7 @@ assistant_id = functions.create_assistant(client)  # 이 기능은 funcionts.py�
 # 대화 만들기
 @app.get("/gpt/start")
 async def start_conversation():
-    thread = client.beta.threads.create()
+    thread = await asyncio.to_thread(client.beta.threads.create)
     return {"thread_id": thread.id}
 
 # 채팅 시작하기
@@ -234,14 +232,11 @@ async def chat(request: Request):
         raise HTTPException(status_code=400, detail="thread_id가 없습니다")
 
     # 유저의 메시지를 쓰레드에 추가
-    client.beta.threads.messages.create(thread_id=thread_id,
-                                        role="user",
-                                        content=message)
-    
+    await asyncio.to_thread(client.beta.threads.messages.create, thread_id=thread_id, role="user", content=message)    
+
     # 어시스턴트 실행
-    run = client.beta.threads.runs.create(thread_id=thread_id,
-                                            assistant_id=assistant_id)
-    print('어시스턴트 실행111')
+    run = await asyncio.to_thread(client.beta.threads.runs.create, thread_id=thread_id, assistant_id=assistant_id)
+    print('어시스턴트 실행')
     
     # 만약 functions.py에서 처리해야하는 내용일 경우 실행
     while True:
@@ -253,6 +248,7 @@ async def chat(request: Request):
             break
         elif run_status.status == "in_progress":
             print('내부처리 중')
+            await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
         elif run_status.status == "requires_action":
             for tool_call in run_status.required_action.submit_tool_outputs.tool_calls:
                 if tool_call.function.name == "information_from_pdf_server":
@@ -284,7 +280,7 @@ async def delete_thread(thread_id: str):
     
     # OpenAI API를 사용하여 스레드 삭제
     try:
-        response = client.beta.threads.delete(thread_id)
+        response = await asyncio.to_thread(client.beta.threads.delete, thread_id)
         return {"id": thread_id, "object": "thread.deleted", "deleted": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail="스레드를 삭제하는 동안 오류가 발생했습니다.")
@@ -292,4 +288,3 @@ async def delete_thread(thread_id: str):
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5001, timeout_keep_alive=60)
-
