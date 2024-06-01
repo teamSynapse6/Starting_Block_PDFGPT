@@ -8,7 +8,9 @@ import openai
 from openai import OpenAI
 import functions
 
-app = FastAPI()
+app = FastAPI(
+    title="PDFGPT_StartingBlock_Server",
+)
 
 # 애플리케이션의 루트 디렉토리 기반으로 절대 경로 생성
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,7 +27,7 @@ class UploadRequest(BaseModel):
     format: str
 
 # 저장된 파일 리스트 get 메소드
-@app.get("/validation")
+@app.get("/validation", tags=["PDF"], summary='저장된 파일 리스트 반환')
 async def validate_files():
     filenames = os.listdir(PROCESSED_FILE_DIR)
     file_ids_numeric = [int(filename[:-4]) for filename in filenames if filename.endswith('.txt')]
@@ -34,7 +36,7 @@ async def validate_files():
     return {"file_ids": file_ids_sorted}
 
 # 저장된 특정 공고 정보 가져오기
-@app.get("/announcement")
+@app.get("/announcement", tags=["PDF"], summary='특정 공고 정보 가져오기')
 async def get_announcement(id: str):
     if not id:
         raise HTTPException(status_code=400, detail="file_id가 없습니다")
@@ -48,7 +50,7 @@ async def get_announcement(id: str):
         raise HTTPException(status_code=404, detail="파일이 없습니다")
 
 # 아이템 삭제 메소드
-@app.delete("/announcement/delete")
+@app.delete("/announcement/delete", tags=["PDF"], summary='저장된 파일 삭제')
 async def delete_files(data: DeleteRequest):
     if not data.id:
         return {"error": "No file ids provided"}
@@ -68,7 +70,7 @@ if not os.path.exists(PROCESSED_FILE_DIR):
     os.makedirs(PROCESSED_FILE_DIR)
 
 # pdf, hwp id 반환후 다운 처리 프로세스
-@app.post("/announcement/upload")
+@app.post("/announcement/upload", tags=["PDF"], summary='파일 업로드')
 async def upload_files(data: List[UploadRequest]):
     success_items = []
     failed_items = []
@@ -206,13 +208,13 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 assistant_id = functions.create_assistant(client)  # 이 기능은 funcionts.py에서 사용
 
 # 대화 만들기
-@app.get("/gpt/start")
+@app.get("/gpt/start", tags=["GPT"], summary='쓰레드 생성')
 async def start_conversation():
     thread = await asyncio.to_thread(client.beta.threads.create)
     return {"thread_id": thread.id}
 
 # 채팅 시작하기
-@app.post("/gpt/chat")
+@app.post("/gpt/chat", tags=["GPT"], summary='채팅 시작')
 async def chat(request: Request): 
     data = await request.json()
     thread_id = data.get('thread_id')
@@ -223,15 +225,12 @@ async def chat(request: Request):
 
     await asyncio.to_thread(client.beta.threads.messages.create, thread_id=thread_id, role="user", content=message)    
     run = await asyncio.to_thread(client.beta.threads.runs.create, thread_id=thread_id, assistant_id=assistant_id)
-    print('어시스턴트 실행')
     
     while True:
         run_status = await asyncio.to_thread(client.beta.threads.runs.retrieve, thread_id=thread_id, run_id=run.id)
         if run_status.status == "completed":
-            print('내부처리 완료')
             break
         elif run_status.status == "in_progress":
-            print('내부처리 중')
             await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
         elif run_status.status == "requires_action":
             for tool_call in run_status.required_action.submit_tool_outputs.tool_calls:
@@ -246,7 +245,6 @@ async def chat(request: Request):
                                                 "output": json.dumps(output)
                                             }])
             await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
-            print('정보호출 완료')
         elif run_status.status in ["failed", "expired"]:
             raise HTTPException(status_code=500, detail="어시스턴트 처리 중 오류가 발생했습니다.")
     
@@ -254,7 +252,7 @@ async def chat(request: Request):
     response = messages.data[0].content[0].text.value
     return JSONResponse(content={"response": response}, media_type="application/json; charset=utf-8")
 
-@app.delete("/gpt/end")
+@app.delete("/gpt/end", tags=["GPT"], summary='쓰레드 삭제')
 async def delete_thread(thread_id: str):
     if not thread_id:
         raise HTTPException(status_code=400, detail="thread_id 파라미터가 필요합니다.")
