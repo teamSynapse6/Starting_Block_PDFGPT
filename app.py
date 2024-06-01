@@ -62,7 +62,7 @@ async def delete_files(data: DeleteRequest):
             try:
                 os.remove(filepath)
             except Exception as e:
-                print(f"Error deleting file {file_id}: {e}")
+                return ({"error": f"Failed to delete file {file_id}"})
     return {"status": "finished"}
 
 # processed_file 디렉토리가 없으면 생성
