@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, APIRouter
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List
@@ -8,7 +8,9 @@ import openai
 from openai import OpenAI
 import functions
 
-app = FastAPI()
+app = FastAPI(
+    title="PDFGPT_StartingBlock_Server",
+)
 
 # 애플리케이션의 루트 디렉토리 기반으로 절대 경로 생성
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,8 +26,10 @@ class UploadRequest(BaseModel):
     id: int
     format: str
 
-# 저장된 파일 리스트 get 메소드
-@app.get("/validation")
+# PDF 관련 라우터
+pdf_router = APIRouter(prefix="/pdf", tags=["PDF"])
+
+@pdf_router.get("/validation")
 async def validate_files():
     filenames = os.listdir(PROCESSED_FILE_DIR)
     file_ids_numeric = [int(filename[:-4]) for filename in filenames if filename.endswith('.txt')]
@@ -33,8 +37,7 @@ async def validate_files():
     file_ids_sorted = [str(file_id) for file_id in file_ids_numeric_sorted]
     return {"file_ids": file_ids_sorted}
 
-# 저장된 특정 공고 정보 가져오기
-@app.get("/announcement")
+@pdf_router.get("/announcement")
 async def get_announcement(id: str):
     if not id:
         raise HTTPException(status_code=400, detail="file_id가 없습니다")
@@ -47,8 +50,7 @@ async def get_announcement(id: str):
     else:
         raise HTTPException(status_code=404, detail="파일이 없습니다")
 
-# 아이템 삭제 메소드
-@app.delete("/announcement/delete")
+@pdf_router.delete("/announcement/delete")
 async def delete_files(data: DeleteRequest):
     if not data.id:
         return {"error": "No file ids provided"}
@@ -63,12 +65,7 @@ async def delete_files(data: DeleteRequest):
                 print(f"Error deleting file {file_id}: {e}")
     return {"status": "finished"}
 
-# processed_file 디렉토리가 없으면 생성
-if not os.path.exists(PROCESSED_FILE_DIR):
-    os.makedirs(PROCESSED_FILE_DIR)
-
-# pdf, hwp id 반환후 다운 처리 프로세스
-@app.post("/announcement/upload")
+@pdf_router.post("/announcement/upload")
 async def upload_files(data: List[UploadRequest]):
     success_items = []
     failed_items = []
@@ -79,23 +76,17 @@ async def upload_files(data: List[UploadRequest]):
         file_format = item.format
         temp_path = os.path.join(BASE_DIR, f"{file_id}.{file_format}")  # 원본 파일 확장자로 저장
 
-        # 지원되는 파일 형식만 처리
         if file_format in ['hwp', 'pdf', 'txt']:
             try:
-                # 파일 다운로드
                 response = requests.get(file_url, stream=True)
                 with open(temp_path, 'wb') as f:
                     shutil.copyfileobj(response.raw, f)
 
-                # 파일 형식에 따른 처리
                 if file_format == 'pdf':
-                    # PDF 파일을 TXT로 변환
                     await convert_pdf_to_txt(temp_path, file_id)
                 elif file_format == 'hwp':
-                    # HWP 파일을 TXT로 변환
                     await convert_hwp_to_txt(temp_path, PROCESSED_FILE_DIR)
                 elif file_format == 'txt':
-                    # TXT 파일은 바로 저장
                     shutil.move(temp_path, os.path.join(PROCESSED_FILE_DIR, f"{file_id}.txt"))
 
                 success_items.append(file_id)
@@ -103,7 +94,7 @@ async def upload_files(data: List[UploadRequest]):
             except Exception as e:
                 failed_items.append(file_id)
                 if os.path.exists(temp_path):
-                    os.remove(temp_path)  # 실패 시 임시 파일 삭제
+                    os.remove(temp_path)
         else:
             failed_items.append(file_id)
 
@@ -111,7 +102,6 @@ async def upload_files(data: List[UploadRequest]):
 
 async def convert_pdf_to_txt(temp_path, file_id):
     try:
-        # 다운로드한 PDF 파일 열기
         doc = fitz.open(temp_path)
         text = ''
         for page in doc:
@@ -121,28 +111,25 @@ async def convert_pdf_to_txt(temp_path, file_id):
         with open(txt_path, 'w', encoding='utf-8') as txt_file:
             txt_file.write(text)
 
-        doc.close()  # PDF 파일 사용 후 닫기
-        os.remove(temp_path)  # 처리 완료 후 원본 PDF 파일 삭제
+        doc.close()
+        os.remove(temp_path)
     except Exception as e:
         raise e
-    
+
 async def get_hwp_text(filename):
     with olefile.OleFileIO(filename) as f:
         dirs = f.listdir()
 
-        # 문서 포맷 압축 여부 확인
         header = f.openstream("FileHeader")
         header_data = header.read()
         is_compressed = (header_data[36] & 1) == 1
 
-        # Body Sections 불러오기
         nums = []
         for d in dirs:
             if d[0] == "BodyText":
                 nums.append(int(d[1][len("Section"):]))
         sections = ["BodyText/Section"+str(x) for x in sorted(nums)]
 
-        # 전체 text 추출
         text = ""
         for section in sections:
             bodytext = f.openstream(section)
@@ -152,7 +139,6 @@ async def get_hwp_text(filename):
             else:
                 unpacked_data = data
 
-            # 각 Section 내 text 추출    
             section_text = ""
             i = 0
             size = len(unpacked_data)
@@ -161,9 +147,9 @@ async def get_hwp_text(filename):
                 rec_type = header & 0x3ff
                 rec_len = (header >> 20) & 0xfff
 
-                if rec_type in [67]:  # 67은 텍스트 블록을 의미
+                if rec_type in [67]:
                     rec_data = unpacked_data[i+4:i+4+rec_len]
-                    section_text += rec_data.decode('utf-16') #UTF-8로 바로 하는건 안됨
+                    section_text += rec_data.decode('utf-16')
                     section_text += "\n"
 
                 i += 4 + rec_len
@@ -172,12 +158,11 @@ async def get_hwp_text(filename):
             text += "\n"
 
         return text
-    
+
 async def convert_hwp_to_txt(hwp_path, output_folder):
     try:
         extracted_text = await get_hwp_text(hwp_path)
-        
-        # 출력 가능한 문자 및 일부 특수 문자만 유지
+
         clean_text = re.sub(r'[^\w\s,.!?;:()가-힣]', '', extracted_text)
 
         file_id = os.path.basename(hwp_path).split('.')[0]
@@ -190,30 +175,19 @@ async def convert_hwp_to_txt(hwp_path, output_folder):
     except Exception as e:
         raise
     finally:
-        # 변환 작업이 완료된 후 원본 HWP 파일 삭제
         if os.path.exists(hwp_path):
             os.remove(hwp_path)
 
-#GPT 서버 코드 부분
+# GPT 관련 라우터
+gpt_router = APIRouter(prefix="/gpt", tags=["GPT"])
 
-# 환경 변수에서 OpenAI API 키 로드
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-
-# OpenAI 클라이언트 초기화
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# 보조자(Assistant) 생성 또는 로드
-assistant_id = functions.create_assistant(client)  # 이 기능은 funcionts.py에서 사용
-
-# 대화 만들기
-@app.get("/gpt/start")
+@gpt_router.get("/start")
 async def start_conversation():
     thread = await asyncio.to_thread(client.beta.threads.create)
     return {"thread_id": thread.id}
 
-# 채팅 시작하기
-@app.post("/gpt/chat")
-async def chat(request: Request): 
+@gpt_router.post("/chat", summary="GPT API에 메시지 전송")
+async def chat(request: Request):
     data = await request.json()
     thread_id = data.get('thread_id')
     message = data.get('message')
@@ -221,10 +195,10 @@ async def chat(request: Request):
     if not thread_id:
         raise HTTPException(status_code=400, detail="thread_id가 없습니다")
 
-    await asyncio.to_thread(client.beta.threads.messages.create, thread_id=thread_id, role="user", content=message)    
+    await asyncio.to_thread(client.beta.threads.messages.create, thread_id=thread_id, role="user", content=message)
     run = await asyncio.to_thread(client.beta.threads.runs.create, thread_id=thread_id, assistant_id=assistant_id)
     print('어시스턴트 실행')
-    
+
     while True:
         run_status = await asyncio.to_thread(client.beta.threads.runs.retrieve, thread_id=thread_id, run_id=run.id)
         if run_status.status == "completed":
@@ -232,7 +206,7 @@ async def chat(request: Request):
             break
         elif run_status.status == "in_progress":
             print('내부처리 중')
-            await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
+            await asyncio.sleep(0.1)
         elif run_status.status == "requires_action":
             for tool_call in run_status.required_action.submit_tool_outputs.tool_calls:
                 if tool_call.function.name == "information_from_pdf_server":
@@ -245,25 +219,38 @@ async def chat(request: Request):
                                                 "tool_call_id": tool_call.id,
                                                 "output": json.dumps(output)
                                             }])
-            await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
+            await asyncio.sleep(0.1)
             print('정보호출 완료')
         elif run_status.status in ["failed", "expired"]:
             raise HTTPException(status_code=500, detail="어시스턴트 처리 중 오류가 발생했습니다.")
-    
+
     messages = await asyncio.to_thread(client.beta.threads.messages.list, thread_id=thread_id)
     response = messages.data[0].content[0].text.value
     return JSONResponse(content={"response": response}, media_type="application/json; charset=utf-8")
 
-@app.delete("/gpt/end")
+@gpt_router.delete("/end")
 async def delete_thread(thread_id: str):
     if not thread_id:
         raise HTTPException(status_code=400, detail="thread_id 파라미터가 필요합니다.")
-    
+
     try:
         response = await asyncio.to_thread(client.beta.threads.delete, thread_id)
         return {"id": thread_id, "object": "thread.deleted", "deleted": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail="스레드를 삭제하는 동안 오류가 발생했습니다.")
+
+# 라우터 등록
+app.include_router(pdf_router)
+app.include_router(gpt_router)
+
+# 환경 변수에서 OpenAI API 키 로드
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
+# OpenAI 클라이언트 초기화
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# 보조자(Assistant) 생성 또는 로드
+assistant_id = functions.create_assistant(client)  # 이 기능은 functions.py에서 사용
 
 if __name__ == '__main__':
     import uvicorn
