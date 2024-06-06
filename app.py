@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List
 from werkzeug.utils import secure_filename
 import requests, fitz, os, shutil, olefile, zlib, struct, json, re, asyncio
+import httpx, aiofiles
 import openai
 from openai import OpenAI
 import functions
@@ -28,7 +29,7 @@ class UploadRequest(BaseModel):
 
 # 저장된 파일 리스트 get 메소드
 @app.get("/validation", tags=["PDF"], summary='저장된 파일 리스트 반환')
-async def validate_files():
+def validate_files():
     filenames = os.listdir(PROCESSED_FILE_DIR)
     file_ids_numeric = [int(filename[:-4]) for filename in filenames if filename.endswith('.txt')]
     file_ids_numeric_sorted = sorted(file_ids_numeric)
@@ -71,43 +72,45 @@ if not os.path.exists(PROCESSED_FILE_DIR):
 
 # pdf, hwp id 반환후 다운 처리 프로세스
 @app.post("/announcement/upload", tags=["PDF"], summary='파일 업로드')
-async def upload_files(data: List[UploadRequest]):
+async def upload_files(data: List[UploadRequest], background_tasks: BackgroundTasks):
     success_items = []
     failed_items = []
 
-    for item in data:
-        file_url = item.url
-        file_id = item.id
-        file_format = item.format
-        temp_path = os.path.join(BASE_DIR, f"{file_id}.{file_format}")  # 원본 파일 확장자로 저장
+    async with httpx.AsyncClient() as client:
+        for item in data:
+            file_url = item.url
+            file_id = item.id
+            file_format = item.format
+            temp_path = os.path.join(BASE_DIR, f"{file_id}.{file_format}")  # 원본 파일 확장자로 저장
 
-        # 지원되는 파일 형식만 처리
-        if file_format in ['hwp', 'pdf', 'txt']:
-            try:
-                # 파일 다운로드
-                response = requests.get(file_url, stream=True)
-                with open(temp_path, 'wb') as f:
-                    shutil.copyfileobj(response.raw, f)
+            # 지원되는 파일 형식만 처리
+            if file_format in ['hwp', 'pdf', 'txt']:
+                try:
+                    # 파일 다운로드
+                    response = await client.get(file_url)
+                    async with aiofiles.open(temp_path, 'wb') as f:
+                        await f.write(response.content)
 
-                # 파일 형식에 따른 처리
-                if file_format == 'pdf':
-                    # PDF 파일을 TXT로 변환
-                    await convert_pdf_to_txt(temp_path, file_id)
-                elif file_format == 'hwp':
-                    # HWP 파일을 TXT로 변환
-                    await convert_hwp_to_txt(temp_path, PROCESSED_FILE_DIR)
-                elif file_format == 'txt':
-                    # TXT 파일은 바로 저장
-                    shutil.move(temp_path, os.path.join(PROCESSED_FILE_DIR, f"{file_id}.txt"))
+                    # 파일 형식에 따른 처리
+                    if file_format == 'pdf':
+                        # PDF 파일을 TXT로 변환
+                        background_tasks.add_task(convert_pdf_to_txt, temp_path, file_id)
+                    elif file_format == 'hwp':
+                        # HWP 파일을 TXT로 변환
+                        background_tasks.add_task(convert_hwp_to_txt, temp_path, PROCESSED_FILE_DIR)
+                    elif file_format == 'txt':
+                        # TXT 파일은 바로 저장
+                        async with aiofiles.open(os.path.join(PROCESSED_FILE_DIR, f"{file_id}.txt"), 'wb') as f:
+                            await f.write(await aiofiles.open(temp_path, 'rb').read())
 
-                success_items.append(file_id)
+                    success_items.append(file_id)
 
-            except Exception as e:
+                except Exception as e:
+                    failed_items.append(file_id)
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)  # 실패 시 임시 파일 삭제
+            else:
                 failed_items.append(file_id)
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)  # 실패 시 임시 파일 삭제
-        else:
-            failed_items.append(file_id)
 
     return {"status": "finished", "success_items": success_items, "failed_items": failed_items}
 
@@ -120,8 +123,8 @@ async def convert_pdf_to_txt(temp_path, file_id):
             text += page.get_text()
 
         txt_path = os.path.join(PROCESSED_FILE_DIR, f"{file_id}.txt")
-        with open(txt_path, 'w', encoding='utf-8') as txt_file:
-            txt_file.write(text)
+        async with aiofiles.open(txt_path, 'w', encoding='utf-8') as txt_file:
+            await txt_file.write(text)
 
         doc.close()  # PDF 파일 사용 후 닫기
         os.remove(temp_path)  # 처리 완료 후 원본 PDF 파일 삭제
@@ -186,8 +189,8 @@ async def convert_hwp_to_txt(hwp_path, output_folder):
         output_file_name = f"{file_id}.txt"
         output_file_path = os.path.join(output_folder, output_file_name)
 
-        with open(output_file_path, 'w', encoding='utf-8') as output_file:
-            output_file.write(clean_text)
+        async with aiofiles.open(output_file_path, 'w', encoding='utf-8') as output_file:
+            await output_file.write(clean_text)
 
     except Exception as e:
         raise
