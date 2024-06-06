@@ -91,20 +91,30 @@ async def upload_files(data: List[UploadRequest], background_tasks: BackgroundTa
                     async with aiofiles.open(temp_path, 'wb') as f:
                         await f.write(response.content)
 
-                    # 파일 형식에 따른 처리
-                    if file_format == 'pdf':
-                        # PDF 파일을 TXT로 변환
-                        background_tasks.add_task(convert_pdf_to_txt, temp_path, file_id)
-                    elif file_format == 'hwp':
-                        # HWP 파일을 TXT로 변환
-                        background_tasks.add_task(convert_hwp_to_txt, temp_path, PROCESSED_FILE_DIR)
-                    elif file_format == 'txt':
-                        # TXT 파일은 바로 저장
-                        async with aiofiles.open(os.path.join(PROCESSED_FILE_DIR, f"{file_id}.txt"), 'wb') as f:
-                            await f.write(await aiofiles.open(temp_path, 'rb').read())
+                    # 파일 형식 확인 후 처리
+                    actual_format = await detect_file_format(temp_path)
+                    if actual_format != file_format:
+                        raise ValueError(f"Incorrect file format for file_id {file_id}: expected {file_format}, got {actual_format}")
 
-                    success_items.append(file_id)
+                    try:
+                        if actual_format == 'pdf':
+                            # PDF 파일을 TXT로 변환
+                            background_tasks.add_task(asyncio.to_thread, convert_pdf_to_txt, temp_path, file_id)
+                        elif actual_format == 'hwp':
+                            # HWP 파일을 TXT로 변환
+                            background_tasks.add_task(asyncio.to_thread, convert_hwp_to_txt, temp_path, PROCESSED_FILE_DIR)
+                        elif actual_format == 'txt':
+                            # TXT 파일은 바로 저장
+                            async with aiofiles.open(os.path.join(PROCESSED_FILE_DIR, f"{file_id}.txt"), 'wb') as f:
+                                async with aiofiles.open(temp_path, 'rb') as src:
+                                    await f.write(await src.read())
+                            os.remove(temp_path)  # 처리 완료 후 원본 TXT 파일 삭제
 
+                        success_items.append(file_id)
+                    except Exception as e:
+                        failed_items.append(file_id)
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)  # 실패 시 임시 파일 삭제
                 except Exception as e:
                     failed_items.append(file_id)
                     if os.path.exists(temp_path):
@@ -114,7 +124,21 @@ async def upload_files(data: List[UploadRequest], background_tasks: BackgroundTa
 
     return {"status": "finished", "success_items": success_items, "failed_items": failed_items}
 
-async def convert_pdf_to_txt(temp_path, file_id):
+async def detect_file_format(temp_path):
+    # 파일의 실제 형식을 확인하는 로직을 추가
+    try:
+        async with aiofiles.open(temp_path, 'rb') as f:
+            header = await f.read(4)
+        if header.startswith(b'%PDF'):
+            return 'pdf'
+        elif header.startswith(b'\xd0\xcf\x11\xe0'):  # OLE header for HWP
+            return 'hwp'
+        else:
+            return 'unknown'
+    except Exception as e:
+        return 'unknown'
+
+def convert_pdf_to_txt(temp_path, file_id):
     try:
         # 다운로드한 PDF 파일 열기
         doc = fitz.open(temp_path)
@@ -123,16 +147,17 @@ async def convert_pdf_to_txt(temp_path, file_id):
             text += page.get_text()
 
         txt_path = os.path.join(PROCESSED_FILE_DIR, f"{file_id}.txt")
-        async with aiofiles.open(txt_path, 'w', encoding='utf-8') as txt_file:
-            await txt_file.write(text)
+        with open(txt_path, 'w', encoding='utf-8') as txt_file:
+            txt_file.write(text)
 
         doc.close()  # PDF 파일 사용 후 닫기
         os.remove(temp_path)  # 처리 완료 후 원본 PDF 파일 삭제
     except Exception as e:
         raise e
-    
-async def get_hwp_text(filename):
-    with olefile.OleFileIO(filename) as f:
+
+def get_hwp_text(filename):
+    with open(filename, 'rb') as file:
+        f = olefile.OleFileIO(file)
         dirs = f.listdir()
 
         # 문서 포맷 압축 여부 확인
@@ -145,7 +170,7 @@ async def get_hwp_text(filename):
         for d in dirs:
             if d[0] == "BodyText":
                 nums.append(int(d[1][len("Section"):]))
-        sections = ["BodyText/Section"+str(x) for x in sorted(nums)]
+        sections = ["BodyText/Section" + str(x) for x in sorted(nums)]
 
         # 전체 text 추출
         text = ""
@@ -167,8 +192,8 @@ async def get_hwp_text(filename):
                 rec_len = (header >> 20) & 0xfff
 
                 if rec_type in [67]:  # 67은 텍스트 블록을 의미
-                    rec_data = unpacked_data[i+4:i+4+rec_len]
-                    section_text += rec_data.decode('utf-16') #UTF-8로 바로 하는건 안됨
+                    rec_data = unpacked_data[i + 4:i + 4 + rec_len]
+                    section_text += rec_data.decode('utf-16')  # UTF-8로 바로 하는건 안됨
                     section_text += "\n"
 
                 i += 4 + rec_len
@@ -177,11 +202,11 @@ async def get_hwp_text(filename):
             text += "\n"
 
         return text
-    
-async def convert_hwp_to_txt(hwp_path, output_folder):
+
+def convert_hwp_to_txt(hwp_path, output_folder):
     try:
-        extracted_text = await get_hwp_text(hwp_path)
-        
+        extracted_text = get_hwp_text(hwp_path)
+
         # 출력 가능한 문자 및 일부 특수 문자만 유지
         clean_text = re.sub(r'[^\w\s,.!?;:()가-힣]', '', extracted_text)
 
@@ -189,8 +214,8 @@ async def convert_hwp_to_txt(hwp_path, output_folder):
         output_file_name = f"{file_id}.txt"
         output_file_path = os.path.join(output_folder, output_file_name)
 
-        async with aiofiles.open(output_file_path, 'w', encoding='utf-8') as output_file:
-            await output_file.write(clean_text)
+        with open(output_file_path, 'w', encoding='utf-8') as output_file:
+            output_file.write(clean_text)
 
     except Exception as e:
         raise
@@ -199,7 +224,7 @@ async def convert_hwp_to_txt(hwp_path, output_folder):
         if os.path.exists(hwp_path):
             os.remove(hwp_path)
 
-#GPT 서버 코드 부분
+# GPT 서버 코드 부분
 
 # 환경 변수에서 OpenAI API 키 로드
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
