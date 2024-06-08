@@ -193,7 +193,10 @@ def get_hwp_text(filename):
 
                 if rec_type in [67]:  # 67은 텍스트 블록을 의미
                     rec_data = unpacked_data[i + 4:i + 4 + rec_len]
-                    section_text += rec_data.decode('utf-16')  # UTF-8로 바로 하는건 안됨
+                    try:
+                        section_text += rec_data.decode('utf-16', errors='ignore')  # 오류 무시
+                    except UnicodeDecodeError:
+                        section_text += rec_data.decode('utf-16', errors='replace')  # 대체 문자를 사용
                     section_text += "\n"
 
                 i += 4 + rec_len
@@ -202,6 +205,7 @@ def get_hwp_text(filename):
             text += "\n"
 
         return text
+
 
 def convert_hwp_to_txt(hwp_path, output_folder):
     try:
