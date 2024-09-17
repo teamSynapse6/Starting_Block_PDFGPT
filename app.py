@@ -8,10 +8,14 @@ import httpx, aiofiles
 import openai
 from openai import OpenAI
 import functions
+from dotenv import load_dotenv
+import uvicorn
 
 app = FastAPI(
     title="PDFGPT_StartingBlock_Server",
 )
+
+load_dotenv(dotenv_path=".env")
 
 # 애플리케이션의 루트 디렉토리 기반으로 절대 경로 생성
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -234,7 +238,7 @@ def convert_hwp_to_txt(hwp_path, output_folder):
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 # OpenAI 클라이언트 초기화
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY, default_headers={"OpenAI-Beta": "assistants=v2"})
 
 # 보조자(Assistant) 생성 또는 로드
 assistant_id = functions.create_assistant(client)  # 이 기능은 funcionts.py에서 사용
@@ -265,7 +269,7 @@ async def chat(request: Request):
         elif run_status.status == "in_progress":
             await asyncio.sleep(0.1) # 완료 후 0.1초간 대기
         elif run_status.status == "requires_action":
-            for tool_call in run_status.required_action.submit_tool_outputs.tool_calls:
+            for tool_call in run_status.required_action.submit_tool_outputs.tool_calls: #이 부분의 레퍼런스를 확인 못함!
                 if tool_call.function.name == "information_from_pdf_server":
                     arguments = json.loads(tool_call.function.arguments)
                     output = functions.information_from_pdf_server(arguments["announcement_id"])
@@ -296,5 +300,4 @@ async def delete_thread(thread_id: str):
         raise HTTPException(status_code=500, detail="스레드를 삭제하는 동안 오류가 발생했습니다.")
 
 if __name__ == '__main__':
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5001, timeout_keep_alive=60)

@@ -1,7 +1,8 @@
-myvenv/
-myvenv/bin/activate
+venv/
+venv/bin/activate
 .gitignore
 __pycache__/
 assistant.json
 process.py
 processed_file/
+.env
