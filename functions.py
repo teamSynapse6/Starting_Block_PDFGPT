@@ -45,16 +45,12 @@ def create_assistant(client):
             assistant_id = assistant_data['assistant_id']
     
     else:
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "OpenAI-Beta": "assistants=v2"
-        }
-        data = {
-            "instructions": assistant_instructions,
-            "name": "Starting_Block_GPT_PDF_Assistant",
-            "model": "gpt-4o",
-            "tools": [
+        #만약 assistant.json이 없다면, 아래의 메소드를 사용하는 새 파일을 생성.
+        assistant = client.beta.assistants.create(
+            instructions=assistant_instructions,
+            name = "Starting_Block_GPT_PDF_Assistant",
+            model="gpt-4o",
+             tools=[
                 {
                     "type": "function",
                     "function": {
@@ -73,15 +69,11 @@ def create_assistant(client):
                     }
                 }
             ]
-        }
-        response = requests.post("https://api.openai.com/v1/assistants", headers=headers, json=data)
-        if response.status_code == 200:
-            assistant = response.json()
-            # 생성된 보조자 ID를 assistant.json 파일에 저장합니다.
-            with open(assistant_file_path, 'w') as file:
-                json.dump({'assistant_id': assistant['id']}, file)
-            assistant_id = assistant['id']
-        else:
-            raise Exception("Failed to create assistant")
+        )
+
+        # 생성된 보조자 ID를 assistant.json 파일에 저장합니다.
+        with open(assistant_file_path, 'w') as file:
+            json.dump({'assistant_id': assistant.id}, file)
+        assistant_id = assistant.id
 
     return assistant_id
