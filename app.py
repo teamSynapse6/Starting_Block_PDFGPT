@@ -298,6 +298,29 @@ async def delete_thread(thread_id: str):
         return {"id": thread_id, "object": "thread.deleted", "deleted": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail="스레드를 삭제하는 동안 오류가 발생했습니다.")
+    
+# API 상태 확인
+@app.get("/gpt/api_status", tags=["GPT"], summary='API 상태 확인')
+async def api_status():
+    try:
+        # OpenAI 상태 API 호출
+        async with httpx.AsyncClient() as client:
+            response = await client.get('https://status.openai.com/api/v2/status.json')
+            if response.status_code == 200:
+                status_data = response.json()
+                indicator = status_data.get('status', {}).get('indicator', 'unknown')
+    
+                # 상태에 따라 메시지 반환
+                if indicator in ['major', 'critical']:
+                    return {"status": "caution", "message": "OpenAI API에 문제가 있습니다. 현재 사용을 주의하세요."}
+                elif indicator in ['minor', 'none']:
+                    return {"status": "good", "message": "OpenAI API가 정상적으로 동작하고 있습니다."}
+                else:
+                    return {"status": "unknown", "message": "상태를 확인할 수 없습니다."}
+            else:
+                raise HTTPException(status_code=500, detail="OpenAI 상태 API를 불러올 수 없습니다.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="API 호출 중 오류가 발생했습니다.")
 
 if __name__ == '__main__':
     uvicorn.run(app, host="0.0.0.0", port=5001, timeout_keep_alive=60)
