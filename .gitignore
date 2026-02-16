@@ -6,3 +6,7 @@ assistant.json
 process.py
 processed_file/
 .env
+
+
+.DS_Store
+app/data/models/

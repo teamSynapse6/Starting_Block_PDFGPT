@@ -1,72 +1,87 @@
-import json
 import uuid
 from datetime import datetime, timezone
-from redis import Redis
-from app.core.config import REDIS_URL, LLM_SESSION_TTL_SECONDS
+
+from app.core.db_models import LLMMessage, LLMThread, get_db_session
 
 
-class RedisSessionStore:
+class MySQLSessionStore:
     def __init__(self):
-        self.client = Redis.from_url(REDIS_URL, decode_responses=True)
-
-    def _session_key(self, thread_id: str) -> str:
-        return f"llm:session:{thread_id}"
+        pass
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
     def create_session(self) -> str:
         thread_id = str(uuid.uuid4())
-        key = self._session_key(thread_id)
-        now = self._now()
-        payload = {
-            "thread_id": thread_id,
-            "created_at": now,
-            "last_activity": now,
-            "announcement_id": "",
-            "messages": "[]",
-        }
-        self.client.hset(key, mapping=payload)
-        self.client.expire(key, LLM_SESSION_TTL_SECONDS)
+
+        with get_db_session() as db:
+            thread = LLMThread(
+                thread_id=thread_id,
+                announcement_id=None,
+                status="active",
+                created_at=datetime.now(timezone.utc),
+                last_activity=datetime.now(timezone.utc),
+            )
+            db.add(thread)
+            db.commit()
+
         return thread_id
 
     def get_session(self, thread_id: str) -> dict | None:
-        key = self._session_key(thread_id)
-        if not self.client.exists(key):
-            return None
+        with get_db_session() as db:
+            thread = db.query(LLMThread).filter(LLMThread.thread_id == thread_id, LLMThread.status == "active").first()
+            if thread is None:
+                return None
 
-        data = self.client.hgetall(key)
-        messages = json.loads(data.get("messages", "[]"))
-        announcement_raw = data.get("announcement_id")
-        announcement_id = int(announcement_raw) if announcement_raw else None
+            rows = (
+                db.query(LLMMessage)
+                .filter(LLMMessage.thread_id == thread_id)
+                .order_by(LLMMessage.seq.asc())
+                .all()
+            )
+            messages = [{"role": row.role, "content": row.content} for row in rows]
+
         return {
-            "thread_id": data.get("thread_id", thread_id),
-            "created_at": data.get("created_at", self._now()),
-            "last_activity": data.get("last_activity", self._now()),
-            "announcement_id": announcement_id,
+            "thread_id": thread.thread_id,
+            "created_at": thread.created_at.isoformat() if thread.created_at else self._now(),
+            "last_activity": thread.last_activity.isoformat() if thread.last_activity else self._now(),
+            "announcement_id": thread.announcement_id,
             "messages": messages,
         }
 
     def save_session(self, thread_id: str, messages: list[dict], announcement_id: int | None):
-        key = self._session_key(thread_id)
-        if not self.client.exists(key):
-            return False
+        with get_db_session() as db:
+            thread = db.query(LLMThread).filter(LLMThread.thread_id == thread_id, LLMThread.status == "active").first()
+            if thread is None:
+                return False
 
-        mapping = {
-            "last_activity": self._now(),
-            "messages": json.dumps(messages, ensure_ascii=False),
-            "announcement_id": "" if announcement_id is None else str(announcement_id),
-        }
-        self.client.hset(key, mapping=mapping)
-        self.client.expire(key, LLM_SESSION_TTL_SECONDS)
-        return True
+            thread.last_activity = datetime.now(timezone.utc)
+            if thread.announcement_id is None:
+                thread.announcement_id = announcement_id
+
+            db.query(LLMMessage).filter(LLMMessage.thread_id == thread_id).delete(synchronize_session=False)
+
+            seq = 1
+            for message in messages:
+                row = LLMMessage(
+                    thread_id=thread_id,
+                    seq=seq,
+                    role=message.get("role", "user"),
+                    content=message.get("content", ""),
+                    created_at=datetime.now(timezone.utc),
+                )
+                db.add(row)
+                seq += 1
+
+            db.commit()
+            return True
 
     def delete_session(self, thread_id: str):
-        key = self._session_key(thread_id)
-        self.client.delete(key)
+        with get_db_session() as db:
+            db.query(LLMThread).filter(LLMThread.thread_id == thread_id).delete(synchronize_session=False)
+            db.commit()
 
     def list_session_ids(self) -> list[str]:
-        ids = []
-        for key in self.client.scan_iter(match="llm:session:*"):
-            ids.append(key.replace("llm:session:", ""))
-        return ids
+        with get_db_session() as db:
+            rows = db.query(LLMThread.thread_id).filter(LLMThread.status == "active").all()
+            return [row[0] for row in rows]

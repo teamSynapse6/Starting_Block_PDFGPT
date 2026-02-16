@@ -18,10 +18,29 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL_IDLE_SECONDS = int(os.getenv("OLLAMA_MODEL_IDLE_SECONDS", "180"))
 OLLAMA_IDLE_SWEEP_INTERVAL_SECONDS = int(os.getenv("OLLAMA_IDLE_SWEEP_INTERVAL_SECONDS", "5"))
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
-
-LLM_SESSION_TTL_SECONDS = int(os.getenv("LLM_SESSION_TTL_SECONDS", "7200"))
 LLM_IDLE_ARCHIVE_SECONDS = int(os.getenv("LLM_IDLE_ARCHIVE_SECONDS", "1200"))
 LLM_ARCHIVE_SWEEP_INTERVAL_SECONDS = int(os.getenv("LLM_ARCHIVE_SWEEP_INTERVAL_SECONDS", "60"))
 
-SQLITE_ARCHIVE_PATH = os.getenv("SQLITE_ARCHIVE_PATH", str(BASE_DIR / "llm_archive.db"))
+MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_USER = os.getenv("MYSQL_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+MYSQL_DB_NAME = os.getenv("MYSQL_DB_NAME", "pdfai_startingblock")
+MYSQL_CHARSET = os.getenv("MYSQL_CHARSET", "utf8mb4")
+
+QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
+QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME", "announcement_chunks")
+
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-large-instruct")
+EMBEDDING_MODEL_REPO_ID = os.getenv("EMBEDDING_MODEL_REPO_ID", EMBEDDING_MODEL_NAME)
+EMBEDDING_MODEL_LOCAL_PATH = os.getenv(
+	"EMBEDDING_MODEL_LOCAL_PATH",
+	str(BASE_DIR / "app" / "data" / "models" / "intfloat__multilingual-e5-large-instruct"),
+)
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
+RAG_CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "1000"))
+RAG_CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
+
+INDEXING_POLL_INTERVAL_SECONDS = int(os.getenv("INDEXING_POLL_INTERVAL_SECONDS", "2"))
+INDEXING_BATCH_SIZE = int(os.getenv("INDEXING_BATCH_SIZE", "16"))

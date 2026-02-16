@@ -42,8 +42,13 @@ async def delete_files(request: Request, data: DeleteRequest):
         return {"error": "No file ids provided"}
 
     storage = request.app.state.storage
+    index_job_store = request.app.state.index_job_store
     for file_id in data.id:
         storage.delete_processed(file_id)
+        try:
+            index_job_store.enqueue("delete", int(file_id))
+        except Exception:
+            continue
 
     return {"status": "finished"}
 
@@ -51,6 +56,7 @@ async def delete_files(request: Request, data: DeleteRequest):
 @router.post("/announcement/upload", summary="파일 업로드")
 async def upload_files(request: Request, data: List[UploadRequest]):
     storage = request.app.state.storage
+    index_job_store = request.app.state.index_job_store
     success_items = []
     failed_items = []
 
@@ -88,6 +94,11 @@ async def upload_files(request: Request, data: List[UploadRequest]):
                     text = file_bytes.decode("utf-8", errors="replace")
 
                 storage.put_processed_text(file_id, text)
+                try:
+                    index_job_store.enqueue("upsert", int(file_id))
+                except Exception:
+                    failed_items.append(file_id)
+                    continue
                 success_items.append(file_id)
             except Exception:
                 failed_items.append(file_id)

@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from httpx import HTTPError
 
 from app.api.llm.prompts import instructions
+from app.core.config import RAG_TOP_K
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
 
@@ -48,6 +49,7 @@ async def chat(request: Request):
     store = request.app.state.session_store
     storage = request.app.state.storage
     ollama_client = request.app.state.ollama_client
+    vector_indexer = request.app.state.vector_indexer
 
     session = await asyncio.to_thread(store.get_session, thread_id)
     if session is None:
@@ -64,13 +66,22 @@ async def chat(request: Request):
     messages = session.get("messages", [])
 
     if not messages:
-        announcement_text = await asyncio.to_thread(storage.get_processed_text, announcement_id)
-        if announcement_text is None:
+        chunks = await asyncio.to_thread(vector_indexer.search_chunks, announcement_id, message, RAG_TOP_K)
+
+        if chunks:
+            rag_context = "\n\n".join(chunk.page_content for chunk in chunks)
+        else:
+            announcement_text = await asyncio.to_thread(storage.get_processed_text, announcement_id)
+            if announcement_text is None:
+                raise HTTPException(status_code=404, detail="공고 파일을 찾을 수 없습니다")
+            rag_context = announcement_text
+
+        if not rag_context.strip():
             raise HTTPException(status_code=404, detail="공고 파일을 찾을 수 없습니다")
 
         system_context = (
             f"{instructions.strip()}\n\n"
-            f"[공고 본문]\n{announcement_text}\n"
+            f"[공고 본문]\n{rag_context}\n"
         )
         messages.append({"role": "system", "content": system_context})
 
@@ -109,7 +120,6 @@ async def delete_session(request: Request, thread_id: str):
 
     try:
         await asyncio.to_thread(archive_store.archive_session, session)
-        await asyncio.to_thread(store.delete_session, thread_id)
         return {"id": thread_id, "deleted": True}
     except Exception as error:
         raise HTTPException(status_code=500, detail="세션 삭제 중 오류가 발생했습니다.") from error
@@ -137,4 +147,3 @@ async def archive_idle_sessions(app):
         idle_time = (now - last_dt).total_seconds()
         if idle_time >= idle_seconds:
             await asyncio.to_thread(archive_store.archive_session, session)
-            await asyncio.to_thread(store.delete_session, thread_id)

@@ -1,14 +1,16 @@
 import io
+
 from minio import Minio
 from minio.error import S3Error
+
 from app.core.config import (
-    MINIO_ENDPOINT,
     MINIO_ACCESS_KEY,
-    MINIO_SECRET_KEY,
-    MINIO_SECURE,
     MINIO_BUCKET,
+    MINIO_ENDPOINT,
     MINIO_PROCESSED_PREFIX,
     MINIO_RAW_PREFIX,
+    MINIO_SECRET_KEY,
+    MINIO_SECURE,
 )
 
 
@@ -23,8 +25,14 @@ class MinioStorage:
         self.bucket = MINIO_BUCKET
 
     def ensure_bucket(self):
-        if not self.client.bucket_exists(self.bucket):
+        if self.client.bucket_exists(self.bucket):
+            return
+
+        try:
             self.client.make_bucket(self.bucket)
+        except S3Error as error:
+            if error.code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+                raise
 
     def _processed_key(self, file_id: int | str) -> str:
         return f"{MINIO_PROCESSED_PREFIX}/{file_id}.txt"

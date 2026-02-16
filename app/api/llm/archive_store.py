@@ -1,59 +1,32 @@
-import json
-import sqlite3
 from datetime import datetime, timezone
-from app.core.config import SQLITE_ARCHIVE_PATH
+
+from app.core.db_models import LLMThread, get_db_session
 
 
-class SQLiteArchiveStore:
+class MySQLArchiveStore:
     def __init__(self):
-        self.db_path = SQLITE_ARCHIVE_PATH
+        pass
 
     def initialize(self):
-        with sqlite3.connect(self.db_path) as connection:
-            cursor = connection.cursor()
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS archived_sessions (
-                    thread_id TEXT PRIMARY KEY,
-                    created_at TEXT NOT NULL,
-                    last_activity TEXT NOT NULL,
-                    archived_at TEXT NOT NULL,
-                    announcement_id INTEGER,
-                    messages_json TEXT NOT NULL
-                )
-                """
-            )
-            connection.commit()
+        return None
 
     def archive_session(self, session: dict):
-        archived_at = datetime.now(timezone.utc).isoformat()
-        messages_json = json.dumps(session.get("messages", []), ensure_ascii=False)
+        thread_id = session.get("thread_id")
+        if not thread_id:
+            return
 
-        with sqlite3.connect(self.db_path) as connection:
-            cursor = connection.cursor()
-            cursor.execute(
-                """
-                INSERT INTO archived_sessions (
-                    thread_id,
-                    created_at,
-                    last_activity,
-                    archived_at,
-                    announcement_id,
-                    messages_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(thread_id) DO UPDATE SET
-                    last_activity=excluded.last_activity,
-                    archived_at=excluded.archived_at,
-                    announcement_id=excluded.announcement_id,
-                    messages_json=excluded.messages_json
-                """,
-                (
-                    session["thread_id"],
-                    session["created_at"],
-                    session["last_activity"],
-                    archived_at,
-                    session.get("announcement_id"),
-                    messages_json,
-                ),
-            )
-            connection.commit()
+        last_activity_raw = session.get("last_activity")
+        try:
+            last_activity = datetime.fromisoformat(last_activity_raw) if last_activity_raw else datetime.now(timezone.utc)
+        except Exception:
+            last_activity = datetime.now(timezone.utc)
+
+        with get_db_session() as db:
+            thread = db.query(LLMThread).filter(LLMThread.thread_id == thread_id).first()
+            if thread is None:
+                return
+
+            thread.status = "archived"
+            thread.last_activity = last_activity
+            thread.archived_at = datetime.now(timezone.utc)
+            db.commit()

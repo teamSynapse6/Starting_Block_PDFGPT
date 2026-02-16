@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from app.api.announcement.storage import MinioStorage
+from app.core.storage import MinioStorage
 
 
 def migrate(source_dir: Path):

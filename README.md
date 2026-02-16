@@ -14,8 +14,9 @@
 ## 실행 구조
 - 루트 엔트리포인트: `main.py`
 - 앱 생성/라우팅/초기화: `main.py`
-- 공고 기능: `app/api/announcement/` (`router.py`, `storage.py`, `file_pipeline.py`)
+- 공고 기능: `app/api/announcement/` (`router.py`, `file_pipeline.py`)
 - LLM 기능: `app/api/llm/` (`router.py`, `client.py`, `session_store.py`, `archive_store.py`, `prompts.py`)
+- 공통 인프라: `app/core/` (`storage.py`, `db_models.py`, `config.py`)
 
 ## 환경 변수
 `.env`에 아래 값을 설정하세요.
@@ -33,18 +34,42 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL_IDLE_SECONDS=180
 OLLAMA_IDLE_SWEEP_INTERVAL_SECONDS=5
 
-REDIS_URL=redis://127.0.0.1:6379/0
-LLM_SESSION_TTL_SECONDS=7200
 LLM_IDLE_ARCHIVE_SECONDS=1200
 LLM_ARCHIVE_SWEEP_INTERVAL_SECONDS=60
 
-SQLITE_ARCHIVE_PATH=./llm_archive.db
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DB_NAME=pdfai_startingblock
+MYSQL_CHARSET=utf8mb4
+
+QDRANT_URL=http://127.0.0.1:6333
+QDRANT_API_KEY=
+QDRANT_COLLECTION_NAME=announcement_chunks
+QDRANT_SERVICE_NAME=starting_block_pdfgpt
+QDRANT_STORAGE_ROOT=/data2/qdrant
+
+EMBEDDING_MODEL_NAME=intfloat/multilingual-e5-large-instruct
+EMBEDDING_MODEL_REPO_ID=intfloat/multilingual-e5-large-instruct
+EMBEDDING_MODEL_LOCAL_PATH=app/data/models/intfloat__multilingual-e5-large-instruct
+RAG_TOP_K=5
+RAG_CHUNK_SIZE=1000
+RAG_CHUNK_OVERLAP=200
+
+INDEXING_POLL_INTERVAL_SECONDS=2
+INDEXING_BATCH_SIZE=16
 ```
 
 ## LLM API
 - `POST /llm/start` : 대화 UUID 생성
 - `POST /llm/chat` : Ollama 채팅 (`thread_id`, `message`, `announcement_id` 필요)
-- `DELETE /llm/delete` : 대화 UUID 삭제 및 SQLite 아카이브
+- `DELETE /llm/delete` : 대화 UUID 종료(스레드 상태 archived 전환)
+
+## 대화 저장소
+- 서버 시작 시 `app/core/db_models.py`에서 MySQL DB(`pdfai_startingblock`)와 테이블을 자동 생성합니다(없으면 생성).
+- `llm_threads` + `llm_messages` 정규화 스키마로 thread_id별 대화 내역을 저장합니다.
+- 상태 컬럼(`active`/`archived`)으로 활성 대화와 종료 대화를 구분 관리합니다.
 
 ## Ollama 동작 정책
 - 서버 시작 시 모델을 미리 실행하지 않습니다.
@@ -56,8 +81,25 @@ SQLITE_ARCHIVE_PATH=./llm_archive.db
 ```bash
 source venv/bin/activate
 pip install -r requirements.txt
+python -m app.scripts.download_embedding_model
 uvicorn main:app --host 0.0.0.0 --port 5001 --workers 2
 ```
+
+`AnnouncementVectorIndexer`는 실행 시 HuggingFace 원격 다운로드를 하지 않고,
+반드시 `EMBEDDING_MODEL_LOCAL_PATH` 경로의 로컬 모델만 사용합니다.
+
+Qdrant는 별도 실행이 필요합니다.
+
+```bash
+mkdir -p ${QDRANT_STORAGE_ROOT}/${QDRANT_SERVICE_NAME}
+docker rm -f pdfgpt-qdrant >/dev/null 2>&1 || true
+docker run -d --name pdfgpt-qdrant \
+	-p 6333:6333 -p 6334:6334 \
+	-v ${QDRANT_STORAGE_ROOT}/${QDRANT_SERVICE_NAME}:/qdrant/storage \
+	qdrant/qdrant
+```
+
+위 설정이면 Qdrant 데이터는 `/data2/qdrant/{서비스명}/` 형태로 영구 저장됩니다.
 
 ## 기존 processed_file 데이터 1회 이전
 기존 로컬 텍스트 파일을 MinIO로 이전하려면:
@@ -67,3 +109,20 @@ python -m app.scripts.migrate_processed_to_minio
 ```
 
 기본 소스 디렉토리는 `./processed_file`이며 필요 시 `SOURCE_DIR` 환경 변수로 변경할 수 있습니다.
+
+## 기존 processed 데이터 임베딩 백필
+```bash
+python -m app.scripts.backfill_embeddings
+```
+
+선택한 공고 ID만 처리:
+
+```bash
+python -m app.scripts.backfill_embeddings --ids 1,2,3
+```
+
+실제 upsert 없이 대상 확인:
+
+```bash
+python -m app.scripts.backfill_embeddings --dry-run
+```
