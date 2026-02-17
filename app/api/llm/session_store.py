@@ -46,6 +46,7 @@ class MySQLSessionStore:
             "created_at": thread.created_at.isoformat() if thread.created_at else self._now(),
             "last_activity": thread.last_activity.isoformat() if thread.last_activity else self._now(),
             "announcement_id": thread.announcement_id,
+            "summary_text": thread.summary_text or "",
             "messages": messages,
         }
 
@@ -80,6 +81,17 @@ class MySQLSessionStore:
         with get_db_session() as db:
             db.query(LLMThread).filter(LLMThread.thread_id == thread_id).delete(synchronize_session=False)
             db.commit()
+
+    def save_summary(self, thread_id: str, summary_text: str):
+        with get_db_session() as db:
+            thread = db.query(LLMThread).filter(LLMThread.thread_id == thread_id).first()
+            if thread is None:
+                return False
+
+            thread.summary_text = summary_text
+            thread.summary_updated_at = datetime.now(timezone.utc)
+            db.commit()
+            return True
 
     def list_session_ids(self) -> list[str]:
         with get_db_session() as db:

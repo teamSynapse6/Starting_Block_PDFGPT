@@ -29,9 +29,10 @@ class AnnouncementVectorIndexer:
         self.model_local_path = Path(EMBEDDING_MODEL_LOCAL_PATH)
         self._validate_local_model_path()
 
+        resolved_device = self._resolve_embedding_device(embedding_device)
         model_kwargs = {"local_files_only": True}
-        if embedding_device != "auto":
-            model_kwargs["device"] = embedding_device
+        if resolved_device != "auto":
+            model_kwargs["device"] = resolved_device
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name=str(self.model_local_path),
@@ -51,6 +52,22 @@ class AnnouncementVectorIndexer:
         )
         self.batch_size = INDEXING_BATCH_SIZE
         self.vector_store: QdrantVectorStore | None = None
+
+    def _resolve_embedding_device(self, embedding_device: str) -> str:
+        normalized = (embedding_device or "auto").strip().lower()
+        if normalized in {"cpu", "mps"}:
+            return normalized
+
+        if normalized in {"cuda", "gpu", "auto"}:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    return "cuda"
+            except Exception:
+                pass
+            return "cpu"
+
+        return normalized
 
     def _get_vector_store(self) -> QdrantVectorStore:
         if self.vector_store is None:

@@ -94,3 +94,17 @@ class MinioStorage:
         except S3Error as error:
             if error.code not in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
                 raise
+
+    def delete_raw(self, file_id: int | str):
+        prefix = f"{MINIO_RAW_PREFIX}/{file_id}."
+        try:
+            objects = self.client.list_objects(self.bucket, prefix=prefix, recursive=True)
+            for obj in objects:
+                self.client.remove_object(self.bucket, obj.object_name)
+        except S3Error as error:
+            if error.code not in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+                raise
+
+    def delete_announcement(self, file_id: int | str):
+        self.delete_processed(file_id)
+        self.delete_raw(file_id)

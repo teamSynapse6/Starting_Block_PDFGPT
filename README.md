@@ -88,9 +88,10 @@ uvicorn main:app --host 0.0.0.0 --port 5001 --workers 2
 `AnnouncementVectorIndexer`는 실행 시 HuggingFace 원격 다운로드를 하지 않고,
 반드시 `EMBEDDING_MODEL_LOCAL_PATH` 경로의 로컬 모델만 사용합니다.
 
-Qdrant는 별도 실행이 필요합니다.
+`main.py` 실행 시 MinIO/Qdrant 컨테이너를 자동으로 시작하고,
+애플리케이션 종료 시 함께 중지합니다.
 
-MinIO도 별도 실행이 필요합니다.
+수동으로 컨테이너를 직접 관리하려면 아래 명령을 사용할 수 있습니다.
 
 ```bash
 mkdir -p /data2/services/minio

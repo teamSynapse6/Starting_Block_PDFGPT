@@ -43,22 +43,44 @@ async def delete_files(request: Request, data: DeleteRequest):
 
     storage = request.app.state.storage
     index_job_store = request.app.state.index_job_store
+    deleted_items = []
+    failed_items = []
+    vector_delete_queued_items = []
+    vector_delete_enqueue_failed_items = []
+
     for file_id in data.id:
-        storage.delete_processed(file_id)
+        try:
+            storage.delete_announcement(file_id)
+            deleted_items.append(file_id)
+        except Exception:
+            failed_items.append(file_id)
+            continue
+
         try:
             index_job_store.enqueue("delete", int(file_id))
         except Exception:
+            vector_delete_enqueue_failed_items.append(file_id)
             continue
 
-    return {"status": "finished"}
+        vector_delete_queued_items.append(file_id)
+
+    return {
+        "status": "finished",
+        "deleted_items": deleted_items,
+        "failed_items": failed_items,
+        "vector_delete_queued_items": vector_delete_queued_items,
+        "vector_delete_enqueue_failed_items": vector_delete_enqueue_failed_items,
+    }
 
 
 @router.post("/announcement/upload", summary="파일 업로드")
 async def upload_files(request: Request, data: List[UploadRequest]):
     storage = request.app.state.storage
     index_job_store = request.app.state.index_job_store
-    success_items = []
-    failed_items = []
+    stored_items = []
+    storage_failed_items = []
+    indexing_queued_items = []
+    indexing_failed_items = []
 
     timeout = httpx.Timeout(30.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -66,7 +88,7 @@ async def upload_files(request: Request, data: List[UploadRequest]):
             file_id = item.id
             file_format = item.format.lower()
             if file_format not in {"hwp", "pdf", "txt"}:
-                failed_items.append(file_id)
+                storage_failed_items.append(file_id)
                 continue
 
             temp_file_path = None
@@ -94,16 +116,25 @@ async def upload_files(request: Request, data: List[UploadRequest]):
                     text = file_bytes.decode("utf-8", errors="replace")
 
                 storage.put_processed_text(file_id, text)
+                stored_items.append(file_id)
+
                 try:
                     index_job_store.enqueue("upsert", int(file_id))
                 except Exception:
-                    failed_items.append(file_id)
+                    indexing_failed_items.append(file_id)
                     continue
-                success_items.append(file_id)
+
+                indexing_queued_items.append(file_id)
             except Exception:
-                failed_items.append(file_id)
+                storage_failed_items.append(file_id)
             finally:
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
 
-    return {"status": "finished", "success_items": success_items, "failed_items": failed_items}
+    return {
+        "status": "finished",
+        "success_items": stored_items,
+        "failed_items": storage_failed_items,
+        "indexing_queued_items": indexing_queued_items,
+        "indexing_failed_items": indexing_failed_items,
+    }

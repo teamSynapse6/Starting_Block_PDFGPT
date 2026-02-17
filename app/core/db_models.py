@@ -53,6 +53,8 @@ class LLMThread(Base):
     status = Column(String(16), nullable=False, default="active", index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utc_now)
     last_activity = Column(DateTime(timezone=True), nullable=False, default=_utc_now)
+    summary_text = Column(Text, nullable=True)
+    summary_updated_at = Column(DateTime(timezone=True), nullable=True)
     archived_at = Column(DateTime(timezone=True), nullable=True)
 
     messages = relationship("LLMMessage", back_populates="thread", cascade="all, delete-orphan", passive_deletes=True)
@@ -101,6 +103,32 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 def ensure_database_and_tables():
     ensure_database_exists()
     Base.metadata.create_all(bind=engine)
+    _ensure_llm_thread_columns()
+
+
+def _ensure_llm_thread_columns():
+    with engine.begin() as connection:
+        columns_to_ensure = {
+            "summary_text": "ALTER TABLE llm_threads ADD COLUMN summary_text TEXT NULL",
+            "summary_updated_at": "ALTER TABLE llm_threads ADD COLUMN summary_updated_at DATETIME NULL",
+        }
+
+        for column_name, ddl in columns_to_ensure.items():
+            exists = connection.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = :schema
+                      AND TABLE_NAME = 'llm_threads'
+                      AND COLUMN_NAME = :column_name
+                    """
+                ),
+                {"schema": MYSQL_DB_NAME, "column_name": column_name},
+            ).scalar()
+
+            if int(exists or 0) == 0:
+                connection.execute(text(ddl))
 
 
 @contextmanager

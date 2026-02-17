@@ -1,20 +1,33 @@
 import asyncio
+import os
 import subprocess
 import time
 
-import httpx
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
+from ollama import AsyncClient
 
 from app.api.llm.prompts import instructions
-from app.core.config import OLLAMA_BASE_URL
-
-OLLAMA_MODEL = "gemma3n:e4b"
+from app.core.config import (
+    OLLAMA_BASE_URL,
+    OLLAMA_FLASH_ATTENTION,
+    OLLAMA_KEEP_ALIVE,
+    OLLAMA_KV_CACHE_TYPE,
+    OLLAMA_MAX_QUEUE,
+    OLLAMA_MODEL,
+    OLLAMA_NUM_CTX,
+    OLLAMA_NUM_PARALLEL,
+    OLLAMA_NUM_PREDICT,
+    OLLAMA_REPEAT_PENALTY,
+    OLLAMA_TOP_K,
+    OLLAMA_TOP_P,
+)
 
 
 class OllamaClient:
     def __init__(self):
         self.base_url = OLLAMA_BASE_URL.rstrip("/")
+        self.client = AsyncClient(host=self.base_url)
         self.model_loaded = False
         self.last_request_at = 0.0
         self._lock = asyncio.Lock()
@@ -22,30 +35,52 @@ class OllamaClient:
     async def chat(self, messages: list[dict]) -> str:
         await self.ensure_model_loaded()
 
-        url = f"{self.base_url}/api/chat"
-        payload = {
-            "model": OLLAMA_MODEL,
-            "messages": messages,
-            "stream": False,
-            "keep_alive": "10m",
-        }
-
-        timeout = httpx.Timeout(120.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            body = response.json()
+        response = await self.client.chat(
+            model=OLLAMA_MODEL,
+            messages=messages,
+            stream=False,
+            keep_alive=OLLAMA_KEEP_ALIVE,
+            options={
+                "num_predict": OLLAMA_NUM_PREDICT,
+                "num_ctx": OLLAMA_NUM_CTX,
+                "top_p": OLLAMA_TOP_P,
+                "top_k": OLLAMA_TOP_K,
+                "repeat_penalty": OLLAMA_REPEAT_PENALTY,
+            },
+        )
 
         self.last_request_at = time.monotonic()
         self.model_loaded = True
 
-        message = body.get("message", {})
-        content = message.get("content", "")
+        content = (response.message.content if response.message else "") or ""
         if not content:
             raise ValueError("OLLAMA_EMPTY_RESPONSE")
         return content
 
-    async def rag_chat(self, question: str, context: str, history: list[dict] | None = None) -> str:
+    def _extract_ollama_timings_ms(self, response_metadata: dict | None) -> dict[str, int]:
+        if not response_metadata:
+            return {}
+
+        timings: dict[str, int] = {}
+        for key in ["total_duration", "load_duration", "prompt_eval_duration", "eval_duration"]:
+            value = response_metadata.get(key)
+            if isinstance(value, (int, float)):
+                timings[f"{key}_ms"] = int(value / 1_000_000)
+
+        for key in ["prompt_eval_count", "eval_count"]:
+            value = response_metadata.get(key)
+            if isinstance(value, int):
+                timings[key] = value
+
+        return timings
+
+    async def rag_chat(
+        self,
+        question: str,
+        context: str,
+        history: list[dict] | None = None,
+        summary_text: str | None = None,
+    ) -> tuple[str, dict[str, int]]:
         await self.ensure_model_loaded()
 
         prompt_system = (
@@ -54,11 +89,15 @@ class OllamaClient:
         )
 
         lc_messages = [SystemMessage(content=prompt_system)]
+        if summary_text and summary_text.strip():
+            lc_messages.append(SystemMessage(content=f"[이전 대화 요약]\n{summary_text.strip()}"))
 
         if history:
             for item in history:
                 role = item.get("role")
-                content = item.get("content", "")
+                content = (item.get("content") or "").strip()
+                if not content:
+                    continue
                 if role == "user":
                     lc_messages.append(HumanMessage(content=content))
                 elif role == "assistant":
@@ -70,6 +109,12 @@ class OllamaClient:
             base_url=self.base_url,
             model=OLLAMA_MODEL,
             temperature=0,
+            keep_alive=OLLAMA_KEEP_ALIVE,
+            num_predict=OLLAMA_NUM_PREDICT,
+            num_ctx=OLLAMA_NUM_CTX,
+            top_p=OLLAMA_TOP_P,
+            top_k=OLLAMA_TOP_K,
+            repeat_penalty=OLLAMA_REPEAT_PENALTY,
         )
 
         response = await llm.ainvoke(lc_messages)
@@ -82,15 +127,13 @@ class OllamaClient:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("OLLAMA_EMPTY_RESPONSE")
 
-        return content.strip()
+        internal_timings = self._extract_ollama_timings_ms(getattr(response, "response_metadata", None))
+        return content.strip(), internal_timings
 
     async def health(self) -> bool:
-        url = f"{self.base_url}/api/tags"
-        timeout = httpx.Timeout(5.0)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(url)
-                return response.status_code == 200
+            await self.client.list()
+            return True
         except Exception:
             return False
 
@@ -99,8 +142,16 @@ class OllamaClient:
             return
 
         try:
+            env = os.environ.copy()
+            env["OLLAMA_FLASH_ATTENTION"] = "1" if OLLAMA_FLASH_ATTENTION else "0"
+            env["OLLAMA_NUM_PARALLEL"] = str(OLLAMA_NUM_PARALLEL)
+            env["OLLAMA_MAX_QUEUE"] = str(OLLAMA_MAX_QUEUE)
+            if OLLAMA_KV_CACHE_TYPE:
+                env["OLLAMA_KV_CACHE_TYPE"] = OLLAMA_KV_CACHE_TYPE
+
             subprocess.Popen(
                 ["ollama", "serve"],
+                env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -122,18 +173,12 @@ class OllamaClient:
                 self.last_request_at = time.monotonic()
                 return
 
-            url = f"{self.base_url}/api/generate"
-            payload = {
-                "model": OLLAMA_MODEL,
-                "prompt": " ",
-                "stream": False,
-                "keep_alive": "10m",
-            }
-
-            timeout = httpx.Timeout(120.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
+            await self.client.generate(
+                model=OLLAMA_MODEL,
+                prompt=" ",
+                stream=False,
+                keep_alive=OLLAMA_KEEP_ALIVE,
+            )
 
             self.model_loaded = True
             self.last_request_at = time.monotonic()
@@ -143,18 +188,12 @@ class OllamaClient:
             if not self.model_loaded:
                 return
 
-            url = f"{self.base_url}/api/generate"
-            payload = {
-                "model": OLLAMA_MODEL,
-                "prompt": "",
-                "stream": False,
-                "keep_alive": 0,
-            }
-
-            timeout = httpx.Timeout(30.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
+            await self.client.generate(
+                model=OLLAMA_MODEL,
+                prompt="",
+                stream=False,
+                keep_alive=0,
+            )
 
             self.model_loaded = False
 
