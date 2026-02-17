@@ -2,6 +2,7 @@ import asyncio
 import os
 import subprocess
 import time
+from typing import AsyncIterator
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
@@ -130,6 +131,80 @@ class OllamaClient:
         internal_timings = self._extract_ollama_timings_ms(getattr(response, "response_metadata", None))
         return content.strip(), internal_timings
 
+    async def rag_chat_stream(
+        self,
+        question: str,
+        context: str,
+        history: list[dict] | None = None,
+        summary_text: str | None = None,
+    ) -> AsyncIterator[dict]:
+        await self.ensure_model_loaded()
+
+        prompt_system = (
+            f"{instructions.strip()}\n\n"
+            f"[공고 본문]\n{context}\n"
+        )
+
+        lc_messages = [SystemMessage(content=prompt_system)]
+        if summary_text and summary_text.strip():
+            lc_messages.append(SystemMessage(content=f"[이전 대화 요약]\n{summary_text.strip()}"))
+
+        if history:
+            for item in history:
+                role = item.get("role")
+                content = (item.get("content") or "").strip()
+                if not content:
+                    continue
+                if role == "user":
+                    lc_messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    lc_messages.append(AIMessage(content=content))
+
+        lc_messages.append(HumanMessage(content=question))
+
+        llm = ChatOllama(
+            base_url=self.base_url,
+            model=OLLAMA_MODEL,
+            temperature=0,
+            keep_alive=OLLAMA_KEEP_ALIVE,
+            num_predict=OLLAMA_NUM_PREDICT,
+            num_ctx=OLLAMA_NUM_CTX,
+            top_p=OLLAMA_TOP_P,
+            top_k=OLLAMA_TOP_K,
+            repeat_penalty=OLLAMA_REPEAT_PENALTY,
+        )
+
+        full_parts: list[str] = []
+        internal_timings: dict[str, int] = {}
+        raw_metadata: dict = {}
+
+        async for chunk in llm.astream(lc_messages):
+            chunk_content = chunk.content
+            if isinstance(chunk_content, list):
+                chunk_content = "".join(str(part) for part in chunk_content)
+            if isinstance(chunk_content, str) and chunk_content:
+                full_parts.append(chunk_content)
+                yield {"type": "token", "content": chunk_content}
+
+            metadata = getattr(chunk, "response_metadata", None)
+            if isinstance(metadata, dict) and metadata.get("done"):
+                internal_timings = self._extract_ollama_timings_ms(metadata)
+                raw_metadata = metadata
+
+        self.last_request_at = time.monotonic()
+        self.model_loaded = True
+
+        full_text = "".join(full_parts).strip()
+        if not full_text:
+            raise ValueError("OLLAMA_EMPTY_RESPONSE")
+
+        yield {
+            "type": "final",
+            "content": full_text,
+            "internal_timings": internal_timings,
+            "raw_metadata": raw_metadata,
+        }
+
     async def health(self) -> bool:
         try:
             await self.client.list()
@@ -178,6 +253,10 @@ class OllamaClient:
                 prompt=" ",
                 stream=False,
                 keep_alive=OLLAMA_KEEP_ALIVE,
+                options={
+                    "num_ctx": OLLAMA_NUM_CTX,
+                    "num_predict": 1,
+                },
             )
 
             self.model_loaded = True

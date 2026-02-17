@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import signal
 import subprocess
@@ -8,6 +9,8 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+
+logger = logging.getLogger(__name__)
 
 from app.api.announcement.router import router as announcements_router
 from app.api.llm.router import router as llm_router, archive_idle_sessions
@@ -125,16 +128,8 @@ async def ollama_idle_loop(app: FastAPI):
 
 
 async def get_vector_indexer(app: FastAPI) -> AnnouncementVectorIndexer:
-    existing = getattr(app.state, "vector_indexer", None)
-    if existing is not None:
-        return existing
-
-    async with app.state.vector_indexer_lock:
-        existing = getattr(app.state, "vector_indexer", None)
-        if existing is None:
-            existing = await asyncio.to_thread(AnnouncementVectorIndexer, EMBEDDING_DEVICE)
-            app.state.vector_indexer = existing
-        return existing
+    """Pre-warmed vector indexer (initialized in lifespan)"""
+    return app.state.vector_indexer
 
 async def announcement_index_loop(app: FastAPI):
     interval = app.state.indexing_poll_interval_seconds
@@ -195,8 +190,18 @@ async def lifespan(app: FastAPI):
         app.state.indexing_poll_interval_seconds = INDEXING_POLL_INTERVAL_SECONDS
         app.state.index_worker_id = f"worker-{uuid.uuid4()}"
         app.state.index_job_store = index_job_store
-        app.state.vector_indexer = None
-        app.state.vector_indexer_lock = asyncio.Lock()
+
+        # Phase 1: 임베딩 모델 pre-warming
+        logger.info("Pre-warming embedding model...")
+        vector_indexer = await asyncio.to_thread(AnnouncementVectorIndexer, EMBEDDING_DEVICE)
+        app.state.vector_indexer = vector_indexer
+        
+        # Warm-up: 더미 검색으로 모델 메모리 로딩
+        try:
+            await asyncio.to_thread(vector_indexer.search_chunks, 1, "warmup", 1)
+            logger.info("Embedding model warmed up successfully")
+        except Exception as e:
+            logger.warning(f"Embedding warm-up failed (non-critical): {e}")
 
         app.state.archive_loop_task = asyncio.create_task(archive_loop(app))
         app.state.ollama_idle_loop_task = asyncio.create_task(ollama_idle_loop(app))
