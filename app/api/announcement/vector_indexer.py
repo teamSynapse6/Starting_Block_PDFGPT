@@ -1,4 +1,5 @@
 import hashlib
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,13 +24,18 @@ from app.core.config import (
 
 
 class AnnouncementVectorIndexer:
-    def __init__(self):
+    def __init__(self, embedding_device: str = "auto"):
         self.collection_name = QDRANT_COLLECTION_NAME
         self.model_local_path = Path(EMBEDDING_MODEL_LOCAL_PATH)
         self._validate_local_model_path()
+
+        model_kwargs = {"local_files_only": True}
+        if embedding_device != "auto":
+            model_kwargs["device"] = embedding_device
+
         self.embeddings = HuggingFaceEmbeddings(
             model_name=str(self.model_local_path),
-            model_kwargs={"local_files_only": True},
+            model_kwargs=model_kwargs,
             encode_kwargs={"normalize_embeddings": True},
         )
         self.client = QdrantClient(
@@ -83,10 +89,15 @@ class AnnouncementVectorIndexer:
 
         sample_vector = self.embeddings.embed_query("벡터 차원 초기화")
         vector_size = len(sample_vector)
-        self.client.create_collection(
-            collection_name=self.collection_name,
-            vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
-        )
+        try:
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
+            )
+        except Exception as error:
+            message = str(error)
+            if "already exists" not in message and "already exist" not in message:
+                raise
 
     def _build_documents(self, announcement_id: int, text: str) -> tuple[list[Document], list[str]]:
         now = datetime.now(timezone.utc).isoformat()
@@ -96,11 +107,12 @@ class AnnouncementVectorIndexer:
         ids: list[str] = []
         for chunk_id, chunk in enumerate(chunks):
             content_hash = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
-            point_id = f"{announcement_id}:{chunk_id}"
+            chunk_uid = f"{announcement_id}:{chunk_id}"
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, chunk_uid))
             metadata = {
                 "announcement_id": announcement_id,
                 "chunk_id": chunk_id,
-                "chunk_uid": point_id,
+                "chunk_uid": chunk_uid,
                 "source": "minio_processed",
                 "content_hash": content_hash,
                 "embedding_model": EMBEDDING_MODEL_REPO_ID,
@@ -158,3 +170,41 @@ class AnnouncementVectorIndexer:
                 ]
             ),
         )
+
+    def announcement_vector_count(self, announcement_id: int) -> int:
+        if not self._collection_exists():
+            return 0
+
+        result = self.client.count(
+            collection_name=self.collection_name,
+            exact=True,
+            count_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="metadata.announcement_id",
+                        match=models.MatchValue(value=announcement_id),
+                    )
+                ]
+            ),
+        )
+        return int(result.count)
+
+    def has_announcement_vectors(self, announcement_id: int) -> bool:
+        if not self._collection_exists():
+            return False
+
+        points, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="metadata.announcement_id",
+                        match=models.MatchValue(value=announcement_id),
+                    )
+                ]
+            ),
+            limit=1,
+            with_payload=False,
+            with_vectors=False,
+        )
+        return len(points) > 0

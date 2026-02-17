@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from httpx import HTTPError
 
-from app.api.llm.prompts import instructions
 from app.core.config import RAG_TOP_K
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
@@ -63,33 +62,31 @@ async def chat(request: Request):
     if session.get("announcement_id") is not None and session.get("announcement_id") != announcement_id:
         raise HTTPException(status_code=400, detail="세션의 announcement_id와 요청값이 다릅니다")
 
-    messages = session.get("messages", [])
+    history_messages = session.get("messages", [])
+    history_messages = [
+        item for item in history_messages
+        if item.get("role") in {"user", "assistant"}
+    ]
 
-    if not messages:
-        chunks = await asyncio.to_thread(vector_indexer.search_chunks, announcement_id, message, RAG_TOP_K)
-
-        if chunks:
-            rag_context = "\n\n".join(chunk.page_content for chunk in chunks)
-        else:
-            announcement_text = await asyncio.to_thread(storage.get_processed_text, announcement_id)
-            if announcement_text is None:
-                raise HTTPException(status_code=404, detail="공고 파일을 찾을 수 없습니다")
-            rag_context = announcement_text
-
-        if not rag_context.strip():
+    chunks = await asyncio.to_thread(vector_indexer.search_chunks, announcement_id, message, RAG_TOP_K)
+    if chunks:
+        rag_context = "\n\n".join(chunk.page_content for chunk in chunks)
+    else:
+        announcement_text = await asyncio.to_thread(storage.get_processed_text, announcement_id)
+        if announcement_text is None:
             raise HTTPException(status_code=404, detail="공고 파일을 찾을 수 없습니다")
+        rag_context = announcement_text
 
-        system_context = (
-            f"{instructions.strip()}\n\n"
-            f"[공고 본문]\n{rag_context}\n"
-        )
-        messages.append({"role": "system", "content": system_context})
-
-    messages.append({"role": "user", "content": message})
+    if not rag_context.strip():
+        raise HTTPException(status_code=404, detail="공고 파일을 찾을 수 없습니다")
 
     try:
         await ollama_client.ensure_model_loaded()
-        response_text = await ollama_client.chat(messages)
+        response_text = await ollama_client.rag_chat(
+            question=message,
+            context=rag_context,
+            history=history_messages,
+        )
     except HTTPError as error:
         raise HTTPException(status_code=502, detail="Ollama 호출 중 오류가 발생했습니다.") from error
     except ValueError as error:
@@ -97,9 +94,12 @@ async def chat(request: Request):
     except Exception as error:
         raise HTTPException(status_code=500, detail="채팅 처리 중 오류가 발생했습니다.") from error
 
-    messages.append({"role": "assistant", "content": response_text})
+    updated_messages = history_messages + [
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": response_text},
+    ]
 
-    saved = await asyncio.to_thread(store.save_session, thread_id, messages, announcement_id)
+    saved = await asyncio.to_thread(store.save_session, thread_id, updated_messages, announcement_id)
     if not saved:
         raise HTTPException(status_code=404, detail="세션 저장에 실패했습니다")
 

@@ -10,3 +10,4 @@ processed_file/
 
 .DS_Store
 app/data/models/
+.minio-data/

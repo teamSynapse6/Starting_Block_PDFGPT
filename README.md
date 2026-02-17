@@ -90,6 +90,21 @@ uvicorn main:app --host 0.0.0.0 --port 5001 --workers 2
 
 Qdrant는 별도 실행이 필요합니다.
 
+MinIO도 별도 실행이 필요합니다.
+
+```bash
+mkdir -p /data2/services/minio
+docker rm -f pdfgpt-minio >/dev/null 2>&1 || true
+docker run -d --name pdfgpt-minio \
+	-p 9000:9000 -p 9001:9001 \
+	-e MINIO_ROOT_USER=minioadmin \
+	-e MINIO_ROOT_PASSWORD=minioadmin \
+	-v /data2/services/minio:/data \
+	quay.io/minio/minio server /data --console-address ':9001'
+```
+
+위 설정이면 버킷 `pdfai-startingblock` 데이터는 `/data2/services/minio/pdfai-startingblock/`에 저장됩니다.
+
 ```bash
 mkdir -p ${QDRANT_STORAGE_ROOT}/${QDRANT_SERVICE_NAME}
 docker rm -f pdfgpt-qdrant >/dev/null 2>&1 || true
@@ -113,6 +128,29 @@ python -m app.scripts.migrate_processed_to_minio
 ## 기존 processed 데이터 임베딩 백필
 ```bash
 python -m app.scripts.backfill_embeddings
+```
+
+체크포인트 파일(`app/data/backfill_embeddings.done`)에
+완료된 `announcement_id`를 기록합니다. 재실행 시 해당 ID는 자동으로 건너뜁니다.
+
+현재 백필은 단일 프로세스 순차 처리 방식입니다.
+
+기본값으로 이미 벡터가 있는 공고도 건너뛰며 재시작합니다:
+
+```bash
+python -m app.scripts.backfill_embeddings
+```
+
+기존 벡터도 강제로 재생성하려면:
+
+```bash
+python -m app.scripts.backfill_embeddings --no-skip-existing
+```
+
+체크포인트 경로 지정:
+
+```bash
+python -m app.scripts.backfill_embeddings --checkpoint app/data/my_backfill.done --skip-existing
 ```
 
 선택한 공고 ID만 처리:

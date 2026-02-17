@@ -3,6 +3,10 @@ import subprocess
 import time
 
 import httpx
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_ollama import ChatOllama
+
+from app.api.llm.prompts import instructions
 from app.core.config import OLLAMA_BASE_URL
 
 OLLAMA_MODEL = "gemma3n:e4b"
@@ -40,6 +44,45 @@ class OllamaClient:
         if not content:
             raise ValueError("OLLAMA_EMPTY_RESPONSE")
         return content
+
+    async def rag_chat(self, question: str, context: str, history: list[dict] | None = None) -> str:
+        await self.ensure_model_loaded()
+
+        prompt_system = (
+            f"{instructions.strip()}\n\n"
+            f"[공고 본문]\n{context}\n"
+        )
+
+        lc_messages = [SystemMessage(content=prompt_system)]
+
+        if history:
+            for item in history:
+                role = item.get("role")
+                content = item.get("content", "")
+                if role == "user":
+                    lc_messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    lc_messages.append(AIMessage(content=content))
+
+        lc_messages.append(HumanMessage(content=question))
+
+        llm = ChatOllama(
+            base_url=self.base_url,
+            model=OLLAMA_MODEL,
+            temperature=0,
+        )
+
+        response = await llm.ainvoke(lc_messages)
+        self.last_request_at = time.monotonic()
+        self.model_loaded = True
+
+        content = response.content
+        if isinstance(content, list):
+            content = "".join(str(part) for part in content)
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("OLLAMA_EMPTY_RESPONSE")
+
+        return content.strip()
 
     async def health(self) -> bool:
         url = f"{self.base_url}/api/tags"
